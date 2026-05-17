@@ -8,8 +8,8 @@ ESP32 + DHT11 温湿度监控，MQTT 云端传输，手机 4G 远程查看 + LED
 - MQTT 上传到云端 Broker（broker.emqx.io）
 - monitor.html 独立页面，手机浏览器直接打开查看
 - LED 远程开关控制
-- 本地 Web 仪表盘（AsyncWebServer）
-- OTA 无线升级
+- 本地 Web 仪表盘 → `http://192.168.31.141/`
+- OTA 无线升级 → 网络端口 `esp32-sensor`，密码 `12345678`
 
 ## 文件说明
 
@@ -28,6 +28,18 @@ sketch_may17a/
 const char* ssid = "WIFI";         // WiFi 名称
 const char* password = "999999999"; // WiFi 密码
 ```
+
+## 局域网访问
+
+ESP32 连接 WiFi 后，同一局域网内的设备浏览器打开：
+
+```
+http://192.168.31.141/
+```
+
+即可看到本地 Web 控制面板（温湿度、LED 控制、系统状态）。
+
+> IP 地址可能因路由器 DHCP 分配而变动，以串口监视器实际输出为准。
 
 ## OTA 无线升级
 
