@@ -40,6 +40,7 @@ const unsigned long MQTT_INTERVAL = 5000;  // 每 5 秒发布一次
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <PubSubClient.h>
+#include <ArduinoOTA.h>
 #ifdef USE_DHT
 #include <DHT.h>
 #endif
@@ -1008,6 +1009,39 @@ void autoMode() {
 #endif
 }
 
+// ==================== OTA 无线升级 ====================
+
+const char* ota_hostname = "esp32-sensor";
+const char* ota_password = "12345678";  // OTA 升级密码
+
+void setupOTA() {
+  ArduinoOTA.setHostname(ota_hostname);
+  ArduinoOTA.setPassword(ota_password);
+
+  ArduinoOTA
+    .onStart([]() {
+      Serial.println("OTA 开始更新...");
+    })
+    .onEnd([]() {
+      Serial.println("OTA 完成");
+    })
+    .onProgress([](unsigned int progress, unsigned int total) {
+      Serial.printf("OTA: %u%%\r", (progress * 100) / total);
+    })
+    .onError([](ota_error_t error) {
+      Serial.printf("OTA 错误[%u]: ", error);
+      if (error == OTA_AUTH_ERROR) Serial.println("认证失败");
+      else if (error == OTA_BEGIN_ERROR) Serial.println("开始失败");
+      else if (error == OTA_CONNECT_ERROR) Serial.println("连接失败");
+      else if (error == OTA_RECEIVE_ERROR) Serial.println("接收失败");
+      else if (error == OTA_END_ERROR) Serial.println("结束失败");
+    });
+
+  ArduinoOTA.begin();
+  Serial.print("OTA 就绪, 主机名: ");
+  Serial.println(ota_hostname);
+}
+
 // ==================== 主程序 ====================
 
 void setup() {
@@ -1041,7 +1075,9 @@ void setup() {
     if (WiFi.status() == WL_CONNECTED) {
       Serial.println("\n连接成功!");
       Serial.print("IP 地址: ");
-      Serial.println(WiFi.localIP());
+      Serial.print(WiFi.localIP());
+      Serial.print("  OTA: ");
+      Serial.println(ota_hostname);
     } else {
       Serial.println("\nWi-Fi 连接失败，切换到 AP 模式");
       WiFi.softAP(ap_ssid, ap_password);
@@ -1050,12 +1086,15 @@ void setup() {
     }
   }
 
+  setupOTA();
   setupRoutes();
   server.begin();
   Serial.println("Web 服务器已启动");
 }
 
 void loop() {
+  ArduinoOTA.handle();
+
   // MQTT 保活 & 重连
   if (!mqttClient.connected()) {
     connectMQTT();
