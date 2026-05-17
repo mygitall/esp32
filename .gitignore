@@ -1,0 +1,10 @@
+# Arduino 编译产物
+build/
+
+# macOS
+.DS_Store
+
+# 暂存文件
+*.swp
+*.swo
+*~

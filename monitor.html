@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>ESP32 监控面板</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, 'Segoe UI', sans-serif;
+    background: #0f0f1a;
+    color: #dcdde1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+  }
+  .container {
+    width: 100%;
+    max-width: 400px;
+    text-align: center;
+  }
+  h1 {
+    font-size: 1.4rem;
+    margin-bottom: 8px;
+    color: #6c5ce7;
+  }
+  .status {
+    font-size: 0.8rem;
+    color: #636e72;
+    margin-bottom: 24px;
+  }
+  .status .dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    animation: pulse 2s infinite;
+  }
+  .dot.online { background: #00cec9; }
+  .dot.offline { background: #ff6b6b; }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .cards {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .card {
+    flex: 1;
+    min-width: 140px;
+    background: #1a1a2e;
+    border: 1px solid #2d2d4a;
+    border-radius: 20px;
+    padding: 24px 16px;
+  }
+  .card .icon { font-size: 2rem; margin-bottom: 8px; }
+  .card .value {
+    font-size: 3rem;
+    font-weight: 700;
+  }
+  .card .unit { font-size: 1.2rem; opacity: 0.6; }
+  .card .label { font-size: 0.75rem; color: #636e72; margin-top: 4px; }
+  .temp .value { color: #fd9644; }
+  .humidity .value { color: #00cec9; }
+
+  .led-display {
+    width: 60px; height: 60px;
+    border-radius: 50%;
+    margin: 0 auto 12px;
+    border: 3px solid #2d2d4a;
+    transition: all 0.3s;
+    background: #2d2d4a;
+  }
+  .led-display.on {
+    background: radial-gradient(circle, #fff176 0%, #ffd54f 40%, #ffb300 100%);
+    border-color: #ffd54f;
+    box-shadow: 0 0 24px rgba(255, 213, 79, 0.5);
+  }
+  .led-btn {
+    width: 100%;
+    padding: 12px;
+    border: none;
+    border-radius: 12px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .led-btn.on { background: #ffb300; color: #1a1a2e; }
+  .led-btn.off { background: #2d2d4a; color: #636e72; border: 1px solid #3d3d5a; }
+
+  .info {
+    margin-top: 20px;
+    font-size: 0.75rem;
+    color: #636e72;
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+  }
+  .updated {
+    margin-top: 12px;
+    font-size: 0.7rem;
+    color: #4a4a6a;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>ESP32 监控面板</h1>
+  <div class="status">
+    <span class="dot" id="statusDot"></span>
+    <span id="statusText">连接中...</span>
+  </div>
+
+  <div class="cards">
+    <div class="card temp">
+      <div class="icon">🌡️</div>
+      <div class="value" id="tempVal">--</div>
+      <span class="unit">°C</span>
+      <div class="label">温度</div>
+    </div>
+    <div class="card humidity">
+      <div class="icon">💧</div>
+      <div class="value" id="humVal">--</div>
+      <span class="unit">%</span>
+      <div class="label">湿度</div>
+    </div>
+  </div>
+
+  <div class="cards" style="margin-top: 16px;">
+    <div class="card">
+      <div class="icon">💡</div>
+      <div class="led-display off" id="ledDisplay"></div>
+      <button class="led-btn off" id="ledBtn" onclick="toggleLed()">打开 LED</button>
+    </div>
+  </div>
+
+  <div class="info">
+    <span>📶 <span id="rssiVal">--</span></span>
+    <span>⏱ <span id="uptimeVal">--</span></span>
+  </div>
+  <div class="updated" id="updatedAt"></div>
+</div>
+
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<script>
+  const broker = 'wss://broker.emqx.io:8084/mqtt';
+  const statusDot = document.getElementById('statusDot');
+  const statusText = document.getElementById('statusText');
+  let ledOn = false;
+
+  const client = mqtt.connect(broker, {
+    clientId: 'web_' + Math.random().toString(16).slice(2, 10),
+    clean: true,
+    connectTimeout: 10000,
+    reconnectPeriod: 5000
+  });
+
+  client.on('connect', () => {
+    statusDot.className = 'dot online';
+    statusText.textContent = '已连接';
+    client.subscribe(['esp32/temp', 'esp32/hum', 'esp32/status', 'esp32/led']);
+  });
+
+  client.on('reconnect', () => {
+    statusDot.className = 'dot offline';
+    statusText.textContent = '重连中...';
+  });
+
+  client.on('offline', () => {
+    statusDot.className = 'dot offline';
+    statusText.textContent = '已断开';
+  });
+
+  client.on('message', (topic, payload) => {
+    const msg = payload.toString();
+    const now = new Date();
+    const time = [now.getHours(), now.getMinutes(), now.getSeconds()]
+      .map(n => String(n).padStart(2, '0')).join(':');
+
+    if (topic === 'esp32/temp') {
+      document.getElementById('tempVal').textContent = parseFloat(msg).toFixed(1);
+    } else if (topic === 'esp32/hum') {
+      document.getElementById('humVal').textContent = parseFloat(msg).toFixed(0);
+    } else if (topic === 'esp32/status') {
+      try {
+        const data = JSON.parse(msg);
+        document.getElementById('tempVal').textContent = parseFloat(data.temp).toFixed(1);
+        document.getElementById('humVal').textContent = parseFloat(data.hum).toFixed(0);
+        document.getElementById('rssiVal').textContent = data.rssi + ' dBm';
+        document.getElementById('uptimeVal').textContent = Math.floor(data.uptime / 60) + ' 分';
+      } catch(e) {}
+    } else if (topic === 'esp32/led') {
+      try {
+        const data = JSON.parse(msg);
+        ledOn = data.led === 'on';
+        updateLedUI();
+      } catch(e) {}
+    }
+
+    document.getElementById('updatedAt').textContent = '更新于 ' + time;
+  });
+
+  function toggleLed() {
+    ledOn = !ledOn;
+    updateLedUI();
+    const cmd = JSON.stringify({ led: ledOn ? 'on' : 'off' });
+    client.publish('esp32/cmd', cmd);
+  }
+
+  function updateLedUI() {
+    const display = document.getElementById('ledDisplay');
+    const btn = document.getElementById('ledBtn');
+    if (ledOn) {
+      display.className = 'led-display on';
+      btn.className = 'led-btn on';
+      btn.textContent = '关闭 LED';
+    } else {
+      display.className = 'led-display off';
+      btn.className = 'led-btn off';
+      btn.textContent = '打开 LED';
+    }
+  }
+</script>
+</body>
+</html>
