@@ -1,23 +1,71 @@
-# esp32
-对于你这种「多个传感器，各自独立」的场景，更专业的做法是每个传感器一个 .cpp + .h 文件：
-  
-    sketch_may17a/
-    ├── sketch_may17a.ino        ← setup() / loop() 主逻辑
-    ├── temp_sensor.h            ← 温度传感器声明
-    ├── temp_sensor.cpp          ← 温度传感器实现
-    ├── air_sensor.h             ← 空气传感器声明
-    ├── air_sensor.cpp           ← 空气传感器实现
+# ESP32 环境监控面板
 
-    好处：每个传感器各自封装，互不干扰，代码清晰，.h 文件可以直接 #include。
+ESP32 + DHT11 温湿度监控，MQTT 云端传输，手机 4G 远程查看 + LED 远程控制。
 
-    对你当前项目的建议
+## 功能
 
-    你现在的 sketch_may17a.ino 已经有 DHT11 温度 + Web + MQTT + LED。如果要加空气传感器（比如
-    MQ135、CCS811 等），建议拆成：
+- DHT11 温湿度采集，每 5 秒上报
+- MQTT 上传到云端 Broker（broker.emqx.io）
+- monitor.html 独立页面，手机浏览器直接打开查看
+- LED 远程开关控制
+- 本地 Web 仪表盘（AsyncWebServer）
+- OTA 无线升级
 
-    - sketch_may17a.ino — 主程序（WiFi、Web、MQTT 连接）
-    - dht_sensor.cpp/h — DHT11 温湿度
-    - air_sensor.cpp/h — 空气传感器
-    - led_control.cpp/h — LED 控制
+## 文件说明
 
-    这样每个传感器独立管理，互不影响。需要我帮你按这个方式重构代码吗？
+```
+sketch_may17a/
+├── sketch_may17a.ino    ← 主程序（WiFi / MQTT / Web / LED / OTA）
+├── monitor.html          ← 手机监控页面
+└── README.md
+```
+
+## 配置
+
+在 `sketch_may17a.ino` 顶部修改：
+
+```cpp
+const char* ssid = "WIFI";         // WiFi 名称
+const char* password = "999999999"; // WiFi 密码
+```
+
+## OTA 无线升级
+
+### 使用方法
+
+烧录一次后，ESP32 不需要再插 USB 数据线。
+
+**Arduino IDE：**
+
+1. ESP32 插充电头或充电宝供电
+2. 电脑连同一个 WiFi
+3. 工具 → 端口 → 选择网络端口 `esp32-sensor`
+4. 点上传，输入密码 `12345678`
+
+**Claude Code（命令行）：**
+
+直接说「帮我 OTA 升级」，自动通过 WiFi 编译上传，全程不需要 USB 线。
+
+### 原理
+
+```
+ESP32（插充电宝）──WiFi──路由器──WiFi──电脑（Arduino IDE / Claude Code）
+                                     │
+                                     └── OTA 无线烧录
+```
+
+核心条件：ESP32 和电脑在**同一个局域网**。ESP32 插哪供电都行。
+
+## 手机远程查看
+
+1. 打开 `monitor.html`（可部署到 PHP 虚拟主机或 GitHub Pages）
+2. 页面自动连接云端 MQTT Broker
+3. 4G / WiFi 都能查看温湿度和控制 LED
+
+## 依赖库
+
+- PubSubClient
+- Async_TCP (ESP32Async)
+- ESP_Async_WebServer (ESP32Async)
+- DHT sensor library
+- ArduinoOTA（ESP32 内置）
