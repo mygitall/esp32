@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>ESP32 环境监控</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -20,8 +21,9 @@
     --warm: #ff7b42;
     --green: #00d4aa;
     --gold: #ffba3b;
-    --radius: 20px;
-    --radius-sm: 14px;
+    --red: #ff4757;
+    --radius: 18px;
+    --radius-sm: 12px;
   }
 
   body {
@@ -33,220 +35,158 @@
     justify-content: center;
     padding: 16px;
     background-image:
-      radial-gradient(ellipse at 20% 20%, rgba(79, 143, 255, 0.06) 0%, transparent 50%),
-      radial-gradient(ellipse at 80% 70%, rgba(255, 123, 66, 0.05) 0%, transparent 50%);
+      radial-gradient(ellipse at 20% 10%, rgba(79, 143, 255, 0.05) 0%, transparent 50%),
+      radial-gradient(ellipse at 80% 50%, rgba(255, 123, 66, 0.04) 0%, transparent 50%);
   }
 
-  .app { width: 100%; max-width: 420px; }
+  .app { width: 100%; max-width: 440px; }
 
-  /* ---- 顶部栏 ---- */
+  /* ---- 顶部 ---- */
   .topbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 20px;
-    padding: 0 4px;
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 16px; padding: 0 4px;
   }
   .topbar h1 {
-    font-size: 1.25rem;
-    font-weight: 700;
-    letter-spacing: -0.3px;
-    background: linear-gradient(135deg, #e2e4e9 0%, #8b8f9a 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    font-size: 1.2rem; font-weight: 700; letter-spacing: -0.3px;
+    background: linear-gradient(135deg, #e2e4e9, #8b8f9a);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
   }
   .conn-badge {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 100px;
-    padding: 6px 14px 6px 10px;
-    font-size: 0.75rem;
-    color: var(--text2);
+    display: flex; align-items: center; gap: 8px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 100px; padding: 6px 14px 6px 10px;
+    font-size: 0.72rem; color: var(--text2);
   }
   .conn-dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    background: #ff6b6b;
-    transition: background 0.4s;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #ff6b6b; transition: background 0.4s;
   }
-  .conn-dot.live { background: var(--green); box-shadow: 0 0 8px rgba(0, 212, 170, 0.4); }
+  .conn-dot.live { background: var(--green); box-shadow: 0 0 8px rgba(0,212,170,0.4); }
 
-  /* ---- 主仪表盘 ---- */
+  /* ---- 仪表盘 ---- */
   .gauges {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 14px;
-    margin-bottom: 14px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;
   }
   .gauge {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 24px 16px;
-    text-align: center;
-    position: relative;
-    overflow: hidden;
-    transition: transform 0.2s, border-color 0.3s;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px 12px; text-align: center;
+    position: relative; overflow: hidden;
   }
-  .gauge:active { transform: scale(0.97); }
-  .gauge .ring {
-    position: absolute;
-    top: -40px; left: 50%;
-    transform: translateX(-50%);
-    width: 120px; height: 120px;
-    border-radius: 50%;
-    opacity: 0.07;
-  }
-  .gauge.temp .ring { background: var(--warm); }
-  .gauge.hum .ring { background: var(--accent); }
-  .gauge .icon { font-size: 1.6rem; margin-bottom: 4px; }
+  .gauge .icon { font-size: 1.3rem; margin-bottom: 2px; }
   .gauge .val {
-    font-size: 3.2rem;
-    font-weight: 800;
-    letter-spacing: -1.5px;
-    line-height: 1;
-    margin-bottom: 2px;
-    position: relative;
-    z-index: 1;
+    font-size: 2.6rem; font-weight: 800; letter-spacing: -1px; line-height: 1;
   }
   .gauge.temp .val { color: var(--warm); }
   .gauge.hum .val { color: var(--accent); }
-  .gauge .unit {
-    font-size: 1.2rem;
-    font-weight: 500;
-    opacity: 0.5;
+  .gauge .unit { font-size: 1rem; opacity: 0.5; font-weight: 500; }
+  .gauge .lbl { font-size: 0.7rem; color: var(--text3); text-transform: uppercase; letter-spacing: 1.5px; }
+  .gauge .trend { font-size: 0.7rem; margin-top: 2px; color: var(--text3); }
+
+  /* ---- Section ---- */
+  .section {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px; margin-bottom: 10px;
   }
-  .gauge .lbl {
-    font-size: 0.78rem;
-    color: var(--text3);
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
-    margin-top: 4px;
+  .section-title {
+    font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1.5px;
+    color: var(--text3); margin-bottom: 12px;
+    display: flex; align-items: center; justify-content: space-between;
   }
-  .gauge .trend {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    font-size: 0.72rem;
-    margin-top: 6px;
-    color: var(--text3);
+  .section-title .btn-sm {
+    font-size: 0.65rem; padding: 4px 10px; border-radius: 6px;
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text2); cursor: pointer;
+  }
+  .btn-sm:active { opacity: 0.7; }
+
+  /* ---- Chart ---- */
+  .chart-wrap { position: relative; height: 200px; }
+  .chart-wrap canvas { width: 100% !important; height: 100% !important; }
+
+  /* ---- Alert ---- */
+  .alert-bar {
+    display: none; padding: 10px 14px; border-radius: 10px;
+    font-size: 0.82rem; font-weight: 600; text-align: center; margin-bottom: 10px;
+    animation: shake 0.4s ease;
+  }
+  .alert-bar.show { display: block; }
+  .alert-bar.danger {
+    background: rgba(255,71,87,0.15); border: 1px solid rgba(255,71,87,0.35);
+    color: var(--red);
+  }
+  .alert-bar.warn {
+    background: rgba(255,186,59,0.12); border: 1px solid rgba(255,186,59,0.3);
+    color: var(--gold);
+  }
+  @keyframes shake {
+    0%,100% { transform: translateX(0); }
+    25% { transform: translateX(-4px); }
+    75% { transform: translateX(4px); }
   }
 
-  /* ---- LED 面板 ---- */
-  .led-panel {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 18px 20px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 14px;
+  .thresh-row {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
   }
-  .led-info { display: flex; align-items: center; gap: 14px; }
-  .led-bulb {
-    width: 48px; height: 48px;
-    border-radius: 50%;
-    background: #1e2330;
-    border: 3px solid #2a3040;
-    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-    position: relative;
+  .thresh-item {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 0.78rem; color: var(--text2);
   }
-  .led-bulb.on {
-    background: radial-gradient(circle at 40% 35%, #fff9c4 0%, #ffcc02 45%, #e6a800 100%);
-    border-color: #ffcc02;
-    box-shadow: 0 0 32px rgba(255, 186, 59, 0.55), 0 0 64px rgba(255, 186, 59, 0.2);
+  .thresh-item input {
+    width: 56px; padding: 6px 8px; border-radius: 8px;
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); font-size: 0.8rem; text-align: center;
   }
-  .led-text { font-size: 0.85rem; font-weight: 600; }
-  .led-text span { color: var(--text3); font-weight: 400; }
+  .thresh-item select {
+    padding: 6px 8px; border-radius: 8px;
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); font-size: 0.75rem;
+  }
 
-  .led-switch {
-    width: 56px; height: 32px;
-    border-radius: 100px;
-    background: #2a3040;
-    border: none;
-    cursor: pointer;
-    position: relative;
-    transition: background 0.3s;
+  /* ---- Switches ---- */
+  .ctrl-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 0;
   }
-  .led-switch.on { background: var(--gold); }
-  .led-switch::after {
-    content: '';
-    position: absolute;
-    top: 3px; left: 4px;
-    width: 26px; height: 26px;
-    border-radius: 50%;
-    background: white;
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  .ctrl-row + .ctrl-row { border-top: 1px solid var(--border); }
+  .ctrl-left { display: flex; align-items: center; gap: 12px; }
+  .ctrl-icon { font-size: 1.4rem; width: 28px; text-align: center; }
+  .ctrl-info .ctrl-name { font-size: 0.85rem; font-weight: 600; }
+  .ctrl-info .ctrl-status { font-size: 0.7rem; color: var(--text3); }
+
+  .toggle {
+    width: 52px; height: 30px; border-radius: 100px;
+    background: #2a3040; border: none; cursor: pointer;
+    position: relative; transition: background 0.3s;
+    flex-shrink: 0;
+  }
+  .toggle.on { background: var(--gold); }
+  .toggle.on.rly { background: var(--accent); }
+  .toggle::after {
+    content: ''; position: absolute; top: 3px; left: 3px;
+    width: 24px; height: 24px; border-radius: 50%; background: #fff;
+    transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
     box-shadow: 0 2px 6px rgba(0,0,0,0.25);
   }
-  .led-switch.on::after { transform: translateX(22px); }
+  .toggle.on::after { transform: translateX(22px); }
 
-  /* ---- 状态条 ---- */
-  .statbar {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 14px;
+  .auto-badge {
+    font-size: 0.6rem; padding: 2px 8px; border-radius: 100px;
+    background: rgba(79,143,255,0.15); color: var(--accent);
+    margin-left: 6px;
   }
-  .stat {
-    flex: 1;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 14px 10px;
-    text-align: center;
-  }
-  .stat .sv { font-size: 1.1rem; font-weight: 700; }
-  .stat .sl { font-size: 0.68rem; color: var(--text3); margin-top: 2px; }
-  .stat.signal .sv { color: var(--accent); }
-  .stat.uptime .sv { color: var(--accent2); }
 
-  /* ---- 信号强度条 ---- */
-  .sig-bars {
-    display: flex;
-    align-items: flex-end;
-    gap: 3px;
-    justify-content: center;
-    height: 22px;
-    margin-bottom: 4px;
-  }
-  .sig-bar {
-    width: 5px; border-radius: 2px;
-    background: var(--border);
-    transition: background 0.3s;
-  }
-  .sig-bar:nth-child(1) { height: 6px; }
-  .sig-bar:nth-child(2) { height: 10px; }
-  .sig-bar:nth-child(3) { height: 15px; }
-  .sig-bar:nth-child(4) { height: 20px; }
-  .sig-bar.hot { background: var(--green); }
-
-  /* ---- 更新时间 ---- */
+  /* ---- Footer ---- */
   .footer {
-    text-align: center;
-    font-size: 0.7rem;
-    color: var(--text3);
-    padding: 6px;
+    text-align: center; font-size: 0.68rem; color: var(--text3); padding: 6px;
   }
-  .footer span { color: var(--text2); }
 
   /* ---- Toast ---- */
   .toast {
-    position: fixed;
-    top: 20px; left: 50%;
-    transform: translateX(-50%) translateY(-120px);
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 10px 22px;
-    font-size: 0.85rem;
-    color: var(--text);
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    z-index: 99;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    position: fixed; top: 20px; left: 50%; transform: translateX(-50%) translateY(-120px);
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 12px; padding: 10px 22px; font-size: 0.85rem;
+    transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
+    z-index: 99; box-shadow: 0 8px 32px rgba(0,0,0,0.5);
   }
   .toast.show { transform: translateX(-50%) translateY(0); }
 </style>
@@ -255,6 +195,7 @@
 <div class="app">
   <div class="toast" id="toast"></div>
 
+  <!-- 顶部 -->
   <div class="topbar">
     <h1>ESP32 环境监控</h1>
     <div class="conn-badge">
@@ -263,16 +204,18 @@
     </div>
   </div>
 
+  <!-- 告警条 -->
+  <div class="alert-bar" id="alertBar"></div>
+
+  <!-- 温湿度仪表盘 -->
   <div class="gauges">
     <div class="gauge temp">
-      <div class="ring"></div>
       <div class="icon">🌡️</div>
       <div class="val"><span id="tempVal">--</span><span class="unit">°C</span></div>
       <div class="lbl">温度</div>
       <div class="trend" id="tempTrend"></div>
     </div>
     <div class="gauge hum">
-      <div class="ring"></div>
       <div class="icon">💧</div>
       <div class="val"><span id="humVal">--</span><span class="unit">%</span></div>
       <div class="lbl">湿度</div>
@@ -280,51 +223,112 @@
     </div>
   </div>
 
-  <div class="led-panel">
-    <div class="led-info">
-      <div class="led-bulb off" id="ledBulb"></div>
-      <div class="led-text" id="ledLabel">LED<span> 已关闭</span></div>
+  <!-- 历史曲线 -->
+  <div class="section">
+    <div class="section-title">
+      📈 历史曲线
+      <button class="btn-sm" onclick="exportCSV()">📥 导出 CSV</button>
     </div>
-    <button class="led-switch off" id="ledSwitch" onclick="toggleLed()"></button>
+    <div class="chart-wrap"><canvas id="chartCanvas"></canvas></div>
   </div>
 
-  <div class="statbar">
-    <div class="stat signal">
-      <div class="sig-bars" id="sigBars">
-        <div class="sig-bar"></div><div class="sig-bar"></div>
-        <div class="sig-bar"></div><div class="sig-bar"></div>
+  <!-- 告警设置 -->
+  <div class="section">
+    <div class="section-title">⚙️ 告警设置</div>
+    <div class="thresh-row">
+      <div class="thresh-item">
+        温度上限 <input type="number" id="tempMax" value="35" min="0" max="80" onchange="saveThresholds()"> °C
       </div>
-      <div class="sl">WiFi 信号</div>
-    </div>
-    <div class="stat uptime">
-      <div class="sv" id="uptimeVal">--</div>
-      <div class="sl">运行时间</div>
+      <div class="thresh-item">
+        湿度下限 <input type="number" id="humMin" value="20" min="0" max="100" onchange="saveThresholds()"> %
+      </div>
+      <div class="thresh-item">
+        <select id="alertMode" onchange="saveThresholds()">
+          <option value="both">温度+湿度</option>
+          <option value="temp">仅温度</option>
+          <option value="hum">仅湿度</option>
+        </select>
+      </div>
     </div>
   </div>
 
-  <div class="footer">最后更新 <span id="updatedAt">--:--:--</span></div>
+  <!-- 设备控制 -->
+  <div class="section">
+    <div class="section-title">🎛️ 设备控制</div>
+    <div class="ctrl-row">
+      <div class="ctrl-left">
+        <div class="ctrl-icon">💡</div>
+        <div class="ctrl-info">
+          <div class="ctrl-name">LED 指示灯</div>
+          <div class="ctrl-status" id="ledStatus">已关闭</div>
+        </div>
+      </div>
+      <button class="toggle off" id="ledToggle" onclick="toggleDevice('led')"></button>
+    </div>
+    <div class="ctrl-row">
+      <div class="ctrl-left">
+        <div class="ctrl-icon">🔌</div>
+        <div class="ctrl-info">
+          <div class="ctrl-name">继电器 <span class="auto-badge" id="relayAutoBadge" style="display:none">自动</span></div>
+          <div class="ctrl-status" id="relayStatus">已关闭</div>
+        </div>
+      </div>
+      <button class="toggle off rly" id="relayToggle" onclick="toggleDevice('relay')"></button>
+    </div>
+  </div>
+
+  <!-- 底部状态 -->
+  <div class="footer">
+    📶 <span id="rssiVal">--</span> &nbsp;|&nbsp;
+    ⏱ <span id="uptimeVal">--</span> &nbsp;|&nbsp;
+    更新 <span id="updatedAt">--:--:--</span>
+  </div>
 </div>
 
 <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 <script>
-  let ledOn = false;
+  // ==================== 配置 ====================
+  const broker = 'wss://broker.emqx.io:8084/mqtt';
+  const MAX_HISTORY = 720; // 1小时 (720 * 5s)
+
+  // ==================== 状态 ====================
+  let ledOn = false, relayOn = false, relayAuto = false;
   let lastTemp = null, lastHum = null;
+  let history = []; // [{ts, temp, hum}]
+  let thresholds = { tempMax: 35, humMin: 20, alertMode: 'both' };
 
   const $ = (id) => document.getElementById(id);
-  const broker = 'wss://broker.emqx.io:8084/mqtt';
 
+  // ==================== 阈值持久化 ====================
+  function loadThresholds() {
+    try {
+      const saved = JSON.parse(localStorage.getItem('esp32_thresholds'));
+      if (saved) {
+        thresholds = saved;
+        $('tempMax').value = thresholds.tempMax;
+        $('humMin').value = thresholds.humMin;
+        $('alertMode').value = thresholds.alertMode;
+      }
+    } catch(e) {}
+  }
+  function saveThresholds() {
+    thresholds.tempMax = parseInt($('tempMax').value) || 35;
+    thresholds.humMin = parseInt($('humMin').value) || 20;
+    thresholds.alertMode = $('alertMode').value;
+    localStorage.setItem('esp32_thresholds', JSON.stringify(thresholds));
+  }
+  loadThresholds();
+
+  // ==================== MQTT 连接 ====================
   const client = mqtt.connect(broker, {
     clientId: 'dash_' + Math.random().toString(16).slice(2, 10),
-    clean: true,
-    connectTimeout: 10000,
-    reconnectPeriod: 5000
+    clean: true, connectTimeout: 10000, reconnectPeriod: 5000
   });
 
-  // ---- 连接状态 ----
   client.on('connect', () => {
     $('connDot').classList.add('live');
     $('connText').textContent = '已连接';
-    client.subscribe(['esp32/temp', 'esp32/hum', 'esp32/status', 'esp32/led']);
+    client.subscribe(['esp32/temp','esp32/hum','esp32/status','esp32/led','esp32/relay']);
   });
 
   client.on('reconnect', () => {
@@ -337,26 +341,28 @@
     $('connText').textContent = '已断开';
   });
 
-  // ---- 消息处理 ----
+  // ==================== 消息处理 ====================
+  let currentTemp = null, currentHum = null;
+
   client.on('message', (topic, payload) => {
     const msg = payload.toString();
     const now = new Date();
     const ts = [now.getHours(), now.getMinutes(), now.getSeconds()]
-      .map(n => String(n).padStart(2, '0')).join(':');
+      .map(n => String(n).padStart(2,'0')).join(':');
 
     if (topic === 'esp32/temp') {
-      const v = parseFloat(msg);
-      updateTemp(v);
+      currentTemp = parseFloat(msg);
+      updateTemp(currentTemp);
     } else if (topic === 'esp32/hum') {
-      const v = parseFloat(msg);
-      updateHum(v);
+      currentHum = parseFloat(msg);
+      updateHum(currentHum);
     } else if (topic === 'esp32/status') {
       try {
         const d = JSON.parse(msg);
-        updateTemp(parseFloat(d.temp));
-        updateHum(parseFloat(d.hum));
+        if (d.temp !== null) { currentTemp = parseFloat(d.temp); updateTemp(currentTemp); }
+        if (d.hum !== null) { currentHum = parseFloat(d.hum); updateHum(currentHum); }
         updateSignal(d.rssi);
-        $('uptimeVal').textContent = Math.floor(d.uptime / 60) + ' 分钟';
+        $('uptimeVal').textContent = Math.floor(d.uptime / 60) + '分钟';
       } catch(e) {}
     } else if (topic === 'esp32/led') {
       try {
@@ -364,12 +370,110 @@
         ledOn = d.led === 'on';
         updateLedUI();
       } catch(e) {}
+    } else if (topic === 'esp32/relay') {
+      try {
+        const d = JSON.parse(msg);
+        relayOn = d.relay === 'on';
+        updateRelayUI();
+      } catch(e) {}
     }
 
     $('updatedAt').textContent = ts;
+
+    // 记录历史数据
+    if (currentTemp !== null || currentHum !== null) {
+      addHistory(now, currentTemp, currentHum);
+    }
+
+    // 告警检查
+    checkAlerts();
   });
 
-  // ---- 温度 ----
+  // ==================== 历史数据 ====================
+  function addHistory(ts, temp, hum) {
+    history.push({ ts: ts.getTime(), temp, hum });
+    if (history.length > MAX_HISTORY) history.shift();
+    updateChart();
+  }
+
+  // ==================== Chart.js ====================
+  let chart;
+  function initChart() {
+    const ctx = $('chartCanvas').getContext('2d');
+    chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [
+          {
+            label: '温度 °C',
+            data: [],
+            borderColor: '#ff7b42',
+            backgroundColor: 'rgba(255,123,66,0.08)',
+            borderWidth: 2,
+            pointRadius: 0,
+            tension: 0.3,
+            fill: true,
+            yAxisID: 'y'
+          },
+          {
+            label: '湿度 %',
+            data: [],
+            borderColor: '#4f8fff',
+            backgroundColor: 'rgba(79,143,255,0.06)',
+            borderWidth: 2,
+            pointRadius: 0,
+            tension: 0.3,
+            fill: true,
+            yAxisID: 'y1'
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { intersect: false, mode: 'index' },
+        plugins: {
+          legend: {
+            labels: { color: '#8b8f9a', usePointStyle: true, boxWidth: 8, font: { size: 10 }, padding: 16 }
+          }
+        },
+        scales: {
+          x: {
+            ticks: { color: '#5a5e6a', font: { size: 9 }, maxTicksLimit: 6 },
+            grid: { color: 'rgba(255,255,255,0.03)' }
+          },
+          y: {
+            type: 'linear', position: 'left',
+            ticks: { color: '#ff7b42', font: { size: 9 }, callback: v => v + '°' },
+            grid: { color: 'rgba(255,255,255,0.03)' },
+            min: 0, max: 60
+          },
+          y1: {
+            type: 'linear', position: 'right',
+            ticks: { color: '#4f8fff', font: { size: 9 }, callback: v => v + '%' },
+            grid: { display: false },
+            min: 0, max: 100
+          }
+        }
+      }
+    });
+  }
+
+  function updateChart() {
+    if (!chart) return;
+    // 只显示最近 60 个点
+    const points = history.slice(-60);
+    chart.data.labels = points.map(p => {
+      const d = new Date(p.ts);
+      return [d.getHours(), d.getMinutes()].map(n => String(n).padStart(2,'0')).join(':');
+    });
+    chart.data.datasets[0].data = points.map(p => p.temp);
+    chart.data.datasets[1].data = points.map(p => p.hum);
+    chart.update('none');
+  }
+
+  // ==================== 温湿度更新 ====================
   function updateTemp(v) {
     if (isNaN(v)) return;
     $('tempVal').textContent = v.toFixed(1);
@@ -398,41 +502,104 @@
     lastHum = v;
   }
 
-  // ---- WiFi 信号 ----
   function updateSignal(rssi) {
-    const bars = document.querySelectorAll('#sigBars .sig-bar');
-    let n = 0;
-    if (rssi > -50) n = 4;
-    else if (rssi > -60) n = 3;
-    else if (rssi > -70) n = 2;
-    else if (rssi > -80) n = 1;
-    bars.forEach((b, i) => b.classList.toggle('hot', i < n));
+    $('rssiVal').textContent = rssi + ' dBm';
   }
 
-  // ---- LED 控制 ----
-  function toggleLed() {
-    ledOn = !ledOn;
-    updateLedUI();
-    client.publish('esp32/cmd', JSON.stringify({ led: ledOn ? 'on' : 'off' }));
-    showToast(ledOn ? 'LED 已打开' : 'LED 已关闭');
-  }
+  // ==================== 告警检查 ====================
+  function checkAlerts() {
+    const bar = $('alertBar');
+    const temp = lastTemp;
+    const hum = lastHum;
+    const mode = thresholds.alertMode;
 
-  function updateLedUI() {
-    const bulb = $('ledBulb');
-    const sw = $('ledSwitch');
-    const label = $('ledLabel');
-    if (ledOn) {
-      bulb.className = 'led-bulb on';
-      sw.className = 'led-switch on';
-      label.innerHTML = '指示灯<span> 已开启</span>';
+    let alert = null;
+    if ((mode === 'both' || mode === 'temp') && temp !== null && temp >= thresholds.tempMax) {
+      alert = { cls: 'danger', msg: `🚨 温度过高！当前 ${temp.toFixed(1)}°C，超过上限 ${thresholds.tempMax}°C` };
+      // 自动开继电器
+      if (!relayOn) autoRelay('on');
+    }
+    if ((mode === 'both' || mode === 'hum') && hum !== null && hum <= thresholds.humMin) {
+      alert = { cls: 'warn', msg: `⚠️ 湿度过低！当前 ${Math.round(hum)}%，低于下限 ${thresholds.humMin}%` };
+    }
+
+    if (alert) {
+      bar.className = 'alert-bar show ' + alert.cls;
+      bar.textContent = alert.msg;
     } else {
-      bulb.className = 'led-bulb off';
-      sw.className = 'led-switch off';
-      label.innerHTML = '指示灯<span> 已关闭</span>';
+      bar.className = 'alert-bar';
+      // 温度恢复正常，自动关继电器
+      if (relayAuto && relayOn && temp !== null && temp < thresholds.tempMax - 1) {
+        autoRelay('off');
+      }
     }
   }
 
-  // ---- Toast ----
+  function autoRelay(state) {
+    relayOn = (state === 'on');
+    relayAuto = true;
+    updateRelayUI();
+    client.publish('esp32/cmd', JSON.stringify({ relay: relayOn ? 'on' : 'off' }));
+  }
+
+  // ==================== 设备控制 ====================
+  function toggleDevice(type) {
+    if (type === 'led') {
+      ledOn = !ledOn;
+      updateLedUI();
+      client.publish('esp32/cmd', JSON.stringify({ led: ledOn ? 'on' : 'off' }));
+      showToast(ledOn ? 'LED 已打开' : 'LED 已关闭');
+    } else if (type === 'relay') {
+      relayOn = !relayOn;
+      relayAuto = false;
+      updateRelayUI();
+      client.publish('esp32/cmd', JSON.stringify({ relay: relayOn ? 'on' : 'off' }));
+      showToast(relayOn ? '继电器 已打开' : '继电器 已关闭');
+    }
+  }
+
+  function updateLedUI() {
+    const btn = $('ledToggle');
+    const st = $('ledStatus');
+    if (ledOn) { btn.className = 'toggle on'; st.textContent = '已开启'; }
+    else { btn.className = 'toggle off'; st.textContent = '已关闭'; }
+  }
+
+  function updateRelayUI() {
+    const btn = $('relayToggle');
+    const st = $('relayStatus');
+    const badge = $('relayAutoBadge');
+    if (relayOn) {
+      btn.className = 'toggle on rly';
+      st.textContent = '已开启';
+    } else {
+      btn.className = 'toggle off rly';
+      st.textContent = '已关闭';
+    }
+    badge.style.display = relayAuto ? 'inline' : 'none';
+  }
+
+  // ==================== CSV 导出 ====================
+  function exportCSV() {
+    if (history.length === 0) { showToast('暂无数据可导出'); return; }
+    let csv = '时间,温度(°C),湿度(%)\n';
+    history.forEach(p => {
+      const d = new Date(p.ts);
+      const t = [d.getHours(), d.getMinutes(), d.getSeconds()]
+        .map(n => String(n).padStart(2,'0')).join(':');
+      csv += `${t},${p.temp ?? ''},${p.hum ?? ''}\n`;
+    });
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `esp32_data_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('CSV 已下载');
+  }
+
+  // ==================== 工具 ====================
   let toastTimer;
   function showToast(msg) {
     const el = $('toast');
@@ -441,6 +608,9 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => el.classList.remove('show'), 1800);
   }
+
+  // ==================== 启动 ====================
+  initChart();
 </script>
 </body>
 </html>

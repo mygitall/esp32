@@ -19,6 +19,9 @@ const char* password = "999999999";
 // LED 引脚
 const int LED_PIN = 2;
 
+// 继电器引脚（接风扇/加湿器）
+const int RELAY_PIN = 5;
+
 // AP 模式开关（true 则不连接 Wi-Fi，直接发射热点）
 const bool USE_AP_MODE = false;
 const char* ap_ssid = "ESP32_Control";
@@ -31,6 +34,7 @@ const char* mqtt_topic_temp = "esp32/temp";
 const char* mqtt_topic_hum = "esp32/hum";
 const char* mqtt_topic_status = "esp32/status";
 const char* mqtt_topic_led = "esp32/led";
+const char* mqtt_topic_relay = "esp32/relay";
 const char* mqtt_topic_cmd = "esp32/cmd";
 const unsigned long MQTT_INTERVAL = 5000;  // 每 5 秒发布一次
 
@@ -57,6 +61,7 @@ AsyncWebServer server(80);
 unsigned long startTime = 0;
 int ledBrightness = 128;  // 0-255
 bool ledState = true;
+bool relayState = false;
 String currentMode = "auto";
 
 // PWM 配置
@@ -930,8 +935,18 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       Serial.println("MQTT 指令: LED 关");
     }
     // 立即上报 LED 状态
-    String state = "{\"led\":\"" + String(ledState ? "on" : "off") + "\",\"brightness\":" + String(ledBrightness) + "}";
-    mqttClient.publish(mqtt_topic_led, state.c_str());
+    String ledJson = "{\"led\":\"" + String(ledState ? "on" : "off") + "\",\"brightness\":" + String(ledBrightness) + "}";
+    mqttClient.publish(mqtt_topic_led, ledJson.c_str());
+    // 处理继电器指令
+    if (msg.indexOf("\"relay\":\"on\"") >= 0) {
+      relayState = true;
+      digitalWrite(RELAY_PIN, HIGH);
+      Serial.println("MQTT 指令: 继电器 开");
+    } else if (msg.indexOf("\"relay\":\"off\"") >= 0) {
+      relayState = false;
+      digitalWrite(RELAY_PIN, LOW);
+      Serial.println("MQTT 指令: 继电器 关");
+    }
   }
 }
 
@@ -988,6 +1003,10 @@ void publishSensorData() {
   // 上报 LED 状态
   String ledJson = "{\"led\":\"" + String(ledState ? "on" : "off") + "\",\"brightness\":" + String(ledBrightness) + "}";
   mqttClient.publish(mqtt_topic_led, ledJson.c_str());
+
+  // 上报继电器状态
+  String relayJson = "{\"relay\":\"" + String(relayState ? "on" : "off") + "\"}";
+  mqttClient.publish(mqtt_topic_relay, relayJson.c_str());
 
   Serial.print("MQTT 发布: ");
   Serial.println(json);
@@ -1051,6 +1070,10 @@ void setup() {
   // LED 初始化
   setupPWM();
   setLedBrightness(ledBrightness);
+
+  // 继电器初始化
+  pinMode(RELAY_PIN, OUTPUT);
+  digitalWrite(RELAY_PIN, LOW);
 
 #ifdef USE_DHT
   dht.begin();
