@@ -160,7 +160,6 @@
     flex-shrink: 0;
   }
   .toggle.on { background: var(--gold); }
-  .toggle.on.rly { background: var(--accent); }
   .toggle::after {
     content: ''; position: absolute; top: 3px; left: 3px;
     width: 24px; height: 24px; border-radius: 50%; background: #fff;
@@ -168,12 +167,6 @@
     box-shadow: 0 2px 6px rgba(0,0,0,0.25);
   }
   .toggle.on::after { transform: translateX(22px); }
-
-  .auto-badge {
-    font-size: 0.6rem; padding: 2px 8px; border-radius: 100px;
-    background: rgba(79,143,255,0.15); color: var(--accent);
-    margin-left: 6px;
-  }
 
   /* ---- Footer ---- */
   .footer {
@@ -265,16 +258,6 @@
       </div>
       <button class="toggle off" id="ledToggle" onclick="toggleDevice('led')"></button>
     </div>
-    <div class="ctrl-row">
-      <div class="ctrl-left">
-        <div class="ctrl-icon">🔌</div>
-        <div class="ctrl-info">
-          <div class="ctrl-name">继电器 <span class="auto-badge" id="relayAutoBadge" style="display:none">自动</span></div>
-          <div class="ctrl-status" id="relayStatus">已关闭</div>
-        </div>
-      </div>
-      <button class="toggle off rly" id="relayToggle" onclick="toggleDevice('relay')"></button>
-    </div>
   </div>
 
   <!-- 底部状态 -->
@@ -292,7 +275,7 @@
   const MAX_HISTORY = 720; // 1小时 (720 * 5s)
 
   // ==================== 状态 ====================
-  let ledOn = false, relayOn = false, relayAuto = false;
+  let ledOn = false;
   let lastTemp = null, lastHum = null;
   let history = []; // [{ts, temp, hum}]
   let thresholds = { tempMax: 35, humMin: 20, alertMode: 'both' };
@@ -328,7 +311,7 @@
   client.on('connect', () => {
     $('connDot').classList.add('live');
     $('connText').textContent = '已连接';
-    client.subscribe(['esp32/temp','esp32/hum','esp32/status','esp32/led','esp32/relay']);
+    client.subscribe(['esp32/temp','esp32/hum','esp32/status','esp32/led']);
   });
 
   client.on('reconnect', () => {
@@ -369,12 +352,6 @@
         const d = JSON.parse(msg);
         ledOn = d.led === 'on';
         updateLedUI();
-      } catch(e) {}
-    } else if (topic === 'esp32/relay') {
-      try {
-        const d = JSON.parse(msg);
-        relayOn = d.relay === 'on';
-        updateRelayUI();
       } catch(e) {}
     }
 
@@ -516,8 +493,6 @@
     let alert = null;
     if ((mode === 'both' || mode === 'temp') && temp !== null && temp >= thresholds.tempMax) {
       alert = { cls: 'danger', msg: `🚨 温度过高！当前 ${temp.toFixed(1)}°C，超过上限 ${thresholds.tempMax}°C` };
-      // 自动开继电器
-      if (!relayOn) autoRelay('on');
     }
     if ((mode === 'both' || mode === 'hum') && hum !== null && hum <= thresholds.humMin) {
       alert = { cls: 'warn', msg: `⚠️ 湿度过低！当前 ${Math.round(hum)}%，低于下限 ${thresholds.humMin}%` };
@@ -528,18 +503,10 @@
       bar.textContent = alert.msg;
     } else {
       bar.className = 'alert-bar';
-      // 温度恢复正常，自动关继电器
-      if (relayAuto && relayOn && temp !== null && temp < thresholds.tempMax - 1) {
-        autoRelay('off');
       }
     }
   }
 
-  function autoRelay(state) {
-    relayOn = (state === 'on');
-    relayAuto = true;
-    updateRelayUI();
-    client.publish('esp32/cmd', JSON.stringify({ relay: relayOn ? 'on' : 'off' }));
   }
 
   // ==================== 设备控制 ====================
@@ -549,12 +516,6 @@
       updateLedUI();
       client.publish('esp32/cmd', JSON.stringify({ led: ledOn ? 'on' : 'off' }));
       showToast(ledOn ? 'LED 已打开' : 'LED 已关闭');
-    } else if (type === 'relay') {
-      relayOn = !relayOn;
-      relayAuto = false;
-      updateRelayUI();
-      client.publish('esp32/cmd', JSON.stringify({ relay: relayOn ? 'on' : 'off' }));
-      showToast(relayOn ? '继电器 已打开' : '继电器 已关闭');
     }
   }
 
@@ -565,18 +526,6 @@
     else { btn.className = 'toggle off'; st.textContent = '已关闭'; }
   }
 
-  function updateRelayUI() {
-    const btn = $('relayToggle');
-    const st = $('relayStatus');
-    const badge = $('relayAutoBadge');
-    if (relayOn) {
-      btn.className = 'toggle on rly';
-      st.textContent = '已开启';
-    } else {
-      btn.className = 'toggle off rly';
-      st.textContent = '已关闭';
-    }
-    badge.style.display = relayAuto ? 'inline' : 'none';
   }
 
   // ==================== CSV 导出 ====================
