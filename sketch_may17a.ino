@@ -946,8 +946,6 @@ void connectMQTT() {
   if (mqttClient.connect(clientId.c_str())) {
     Serial.println(" 成功!");
     mqttClient.subscribe(mqtt_topic_cmd);
-    Serial.print("订阅指令主题: ");
-    Serial.println(mqtt_topic_cmd);
   } else {
     Serial.print(" 失败, rc=");
     Serial.println(mqttClient.state());
@@ -955,6 +953,8 @@ void connectMQTT() {
 }
 
 void publishSensorData() {
+  String json = "{";
+
 #ifdef USE_DHT
   float temp = dht.readTemperature();
   float hum = dht.readHumidity();
@@ -966,22 +966,30 @@ void publishSensorData() {
     dtostrf(hum, 4, 1, buf);
     mqttClient.publish(mqtt_topic_hum, buf);
 
-    // 发布 JSON 状态（含温度、湿度、WiFi 信号强度）
-    String json = "{";
     json += "\"temp\":" + String(temp, 1) + ",";
     json += "\"hum\":" + String(hum, 0) + ",";
-    json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
-    json += "\"uptime\":" + String(millis() / 1000);
-    json += "}";
-    mqttClient.publish(mqtt_topic_status, json.c_str());
-
-    Serial.print("MQTT 发布: ");
-    Serial.println(json);
+  } else {
+    json += "\"temp\":null,";
+    json += "\"hum\":null,";
   }
+#else
+  json += "\"temp\":null,";
+  json += "\"hum\":null,";
 #endif
+
+  // 发布状态（WiFi 信号、运行时间始终可用）
+  json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
+  json += "\"uptime\":" + String(millis() / 1000) + ",";
+  json += "\"ip\":\"" + WiFi.localIP().toString() + "\"";
+  json += "}";
+  mqttClient.publish(mqtt_topic_status, json.c_str());
+
   // 上报 LED 状态
-  String state = "{\"led\":\"" + String(ledState ? "on" : "off") + "\",\"brightness\":" + String(ledBrightness) + "}";
-  mqttClient.publish(mqtt_topic_led, state.c_str());
+  String ledJson = "{\"led\":\"" + String(ledState ? "on" : "off") + "\",\"brightness\":" + String(ledBrightness) + "}";
+  mqttClient.publish(mqtt_topic_led, ledJson.c_str());
+
+  Serial.print("MQTT 发布: ");
+  Serial.println(json);
 }
 
 // ==================== 自动模式（传感器联动） ====================

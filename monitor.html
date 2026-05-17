@@ -3,228 +3,443 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>ESP32 监控面板</title>
+<title>ESP32 环境监控</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0b0e14;
+    --surface: #141820;
+    --surface2: #1a1f2b;
+    --border: #252a35;
+    --text: #e2e4e9;
+    --text2: #8b8f9a;
+    --text3: #5a5e6a;
+    --accent: #4f8fff;
+    --accent2: #6c5ce7;
+    --warm: #ff7b42;
+    --green: #00d4aa;
+    --gold: #ffba3b;
+    --radius: 20px;
+    --radius-sm: 14px;
+  }
+
   body {
-    font-family: -apple-system, 'Segoe UI', sans-serif;
-    background: #0f0f1a;
-    color: #dcdde1;
+    font-family: -apple-system, 'SF Pro Display', 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
     display: flex;
     justify-content: center;
+    padding: 16px;
+    background-image:
+      radial-gradient(ellipse at 20% 20%, rgba(79, 143, 255, 0.06) 0%, transparent 50%),
+      radial-gradient(ellipse at 80% 70%, rgba(255, 123, 66, 0.05) 0%, transparent 50%);
+  }
+
+  .app { width: 100%; max-width: 420px; }
+
+  /* ---- 顶部栏 ---- */
+  .topbar {
+    display: flex;
     align-items: center;
-    min-height: 100vh;
-    padding: 20px;
+    justify-content: space-between;
+    margin-bottom: 20px;
+    padding: 0 4px;
   }
-  .container {
-    width: 100%;
-    max-width: 400px;
-    text-align: center;
+  .topbar h1 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    background: linear-gradient(135deg, #e2e4e9 0%, #8b8f9a 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
   }
-  h1 {
-    font-size: 1.4rem;
-    margin-bottom: 8px;
-    color: #6c5ce7;
+  .conn-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    padding: 6px 14px 6px 10px;
+    font-size: 0.75rem;
+    color: var(--text2);
   }
-  .status {
-    font-size: 0.8rem;
-    color: #636e72;
-    margin-bottom: 24px;
-  }
-  .status .dot {
-    display: inline-block;
+  .conn-dot {
     width: 8px; height: 8px;
     border-radius: 50%;
-    margin-right: 6px;
-    animation: pulse 2s infinite;
+    background: #ff6b6b;
+    transition: background 0.4s;
   }
-  .dot.online { background: #00cec9; }
-  .dot.offline { background: #ff6b6b; }
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
+  .conn-dot.live { background: var(--green); box-shadow: 0 0 8px rgba(0, 212, 170, 0.4); }
+
+  /* ---- 主仪表盘 ---- */
+  .gauges {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin-bottom: 14px;
   }
-  .cards {
-    display: flex;
-    gap: 16px;
-    justify-content: center;
-    flex-wrap: wrap;
-  }
-  .card {
-    flex: 1;
-    min-width: 140px;
-    background: #1a1a2e;
-    border: 1px solid #2d2d4a;
-    border-radius: 20px;
+  .gauge {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     padding: 24px 16px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.2s, border-color 0.3s;
   }
-  .card .icon { font-size: 2rem; margin-bottom: 8px; }
-  .card .value {
-    font-size: 3rem;
-    font-weight: 700;
-  }
-  .card .unit { font-size: 1.2rem; opacity: 0.6; }
-  .card .label { font-size: 0.75rem; color: #636e72; margin-top: 4px; }
-  .temp .value { color: #fd9644; }
-  .humidity .value { color: #00cec9; }
-
-  .led-display {
-    width: 60px; height: 60px;
+  .gauge:active { transform: scale(0.97); }
+  .gauge .ring {
+    position: absolute;
+    top: -40px; left: 50%;
+    transform: translateX(-50%);
+    width: 120px; height: 120px;
     border-radius: 50%;
-    margin: 0 auto 12px;
-    border: 3px solid #2d2d4a;
-    transition: all 0.3s;
-    background: #2d2d4a;
+    opacity: 0.07;
   }
-  .led-display.on {
-    background: radial-gradient(circle, #fff176 0%, #ffd54f 40%, #ffb300 100%);
-    border-color: #ffd54f;
-    box-shadow: 0 0 24px rgba(255, 213, 79, 0.5);
+  .gauge.temp .ring { background: var(--warm); }
+  .gauge.hum .ring { background: var(--accent); }
+  .gauge .icon { font-size: 1.6rem; margin-bottom: 4px; }
+  .gauge .val {
+    font-size: 3.2rem;
+    font-weight: 800;
+    letter-spacing: -1.5px;
+    line-height: 1;
+    margin-bottom: 2px;
+    position: relative;
+    z-index: 1;
   }
-  .led-btn {
-    width: 100%;
-    padding: 12px;
-    border: none;
-    border-radius: 12px;
-    font-size: 1rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
+  .gauge.temp .val { color: var(--warm); }
+  .gauge.hum .val { color: var(--accent); }
+  .gauge .unit {
+    font-size: 1.2rem;
+    font-weight: 500;
+    opacity: 0.5;
   }
-  .led-btn.on { background: #ffb300; color: #1a1a2e; }
-  .led-btn.off { background: #2d2d4a; color: #636e72; border: 1px solid #3d3d5a; }
+  .gauge .lbl {
+    font-size: 0.78rem;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-top: 4px;
+  }
+  .gauge .trend {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 0.72rem;
+    margin-top: 6px;
+    color: var(--text3);
+  }
 
-  .info {
-    margin-top: 20px;
-    font-size: 0.75rem;
-    color: #636e72;
+  /* ---- LED 面板 ---- */
+  .led-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
     display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .led-info { display: flex; align-items: center; gap: 14px; }
+  .led-bulb {
+    width: 48px; height: 48px;
+    border-radius: 50%;
+    background: #1e2330;
+    border: 3px solid #2a3040;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+  }
+  .led-bulb.on {
+    background: radial-gradient(circle at 40% 35%, #fff9c4 0%, #ffcc02 45%, #e6a800 100%);
+    border-color: #ffcc02;
+    box-shadow: 0 0 32px rgba(255, 186, 59, 0.55), 0 0 64px rgba(255, 186, 59, 0.2);
+  }
+  .led-text { font-size: 0.85rem; font-weight: 600; }
+  .led-text span { color: var(--text3); font-weight: 400; }
+
+  .led-switch {
+    width: 56px; height: 32px;
+    border-radius: 100px;
+    background: #2a3040;
+    border: none;
+    cursor: pointer;
+    position: relative;
+    transition: background 0.3s;
+  }
+  .led-switch.on { background: var(--gold); }
+  .led-switch::after {
+    content: '';
+    position: absolute;
+    top: 3px; left: 4px;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: white;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+  }
+  .led-switch.on::after { transform: translateX(22px); }
+
+  /* ---- 状态条 ---- */
+  .statbar {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .stat {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 14px 10px;
+    text-align: center;
+  }
+  .stat .sv { font-size: 1.1rem; font-weight: 700; }
+  .stat .sl { font-size: 0.68rem; color: var(--text3); margin-top: 2px; }
+  .stat.signal .sv { color: var(--accent); }
+  .stat.uptime .sv { color: var(--accent2); }
+
+  /* ---- 信号强度条 ---- */
+  .sig-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
     justify-content: center;
-    gap: 20px;
+    height: 22px;
+    margin-bottom: 4px;
   }
-  .updated {
-    margin-top: 12px;
+  .sig-bar {
+    width: 5px; border-radius: 2px;
+    background: var(--border);
+    transition: background 0.3s;
+  }
+  .sig-bar:nth-child(1) { height: 6px; }
+  .sig-bar:nth-child(2) { height: 10px; }
+  .sig-bar:nth-child(3) { height: 15px; }
+  .sig-bar:nth-child(4) { height: 20px; }
+  .sig-bar.hot { background: var(--green); }
+
+  /* ---- 更新时间 ---- */
+  .footer {
+    text-align: center;
     font-size: 0.7rem;
-    color: #4a4a6a;
+    color: var(--text3);
+    padding: 6px;
   }
+  .footer span { color: var(--text2); }
+
+  /* ---- Toast ---- */
+  .toast {
+    position: fixed;
+    top: 20px; left: 50%;
+    transform: translateX(-50%) translateY(-120px);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 22px;
+    font-size: 0.85rem;
+    color: var(--text);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 99;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  }
+  .toast.show { transform: translateX(-50%) translateY(0); }
 </style>
 </head>
 <body>
-<div class="container">
-  <h1>ESP32 监控面板</h1>
-  <div class="status">
-    <span class="dot" id="statusDot"></span>
-    <span id="statusText">连接中...</span>
+<div class="app">
+  <div class="toast" id="toast"></div>
+
+  <div class="topbar">
+    <h1>ESP32 环境监控</h1>
+    <div class="conn-badge">
+      <div class="conn-dot" id="connDot"></div>
+      <span id="connText">连接中</span>
+    </div>
   </div>
 
-  <div class="cards">
-    <div class="card temp">
+  <div class="gauges">
+    <div class="gauge temp">
+      <div class="ring"></div>
       <div class="icon">🌡️</div>
-      <div class="value" id="tempVal">--</div>
-      <span class="unit">°C</span>
-      <div class="label">温度</div>
+      <div class="val"><span id="tempVal">--</span><span class="unit">°C</span></div>
+      <div class="lbl">温度</div>
+      <div class="trend" id="tempTrend"></div>
     </div>
-    <div class="card humidity">
+    <div class="gauge hum">
+      <div class="ring"></div>
       <div class="icon">💧</div>
-      <div class="value" id="humVal">--</div>
-      <span class="unit">%</span>
-      <div class="label">湿度</div>
+      <div class="val"><span id="humVal">--</span><span class="unit">%</span></div>
+      <div class="lbl">湿度</div>
+      <div class="trend" id="humTrend"></div>
     </div>
   </div>
 
-  <div class="cards" style="margin-top: 16px;">
-    <div class="card">
-      <div class="icon">💡</div>
-      <div class="led-display off" id="ledDisplay"></div>
-      <button class="led-btn off" id="ledBtn" onclick="toggleLed()">打开 LED</button>
+  <div class="led-panel">
+    <div class="led-info">
+      <div class="led-bulb off" id="ledBulb"></div>
+      <div class="led-text" id="ledLabel">LED<span> 已关闭</span></div>
+    </div>
+    <button class="led-switch off" id="ledSwitch" onclick="toggleLed()"></button>
+  </div>
+
+  <div class="statbar">
+    <div class="stat signal">
+      <div class="sig-bars" id="sigBars">
+        <div class="sig-bar"></div><div class="sig-bar"></div>
+        <div class="sig-bar"></div><div class="sig-bar"></div>
+      </div>
+      <div class="sl">WiFi 信号</div>
+    </div>
+    <div class="stat uptime">
+      <div class="sv" id="uptimeVal">--</div>
+      <div class="sl">运行时间</div>
     </div>
   </div>
 
-  <div class="info">
-    <span>📶 <span id="rssiVal">--</span></span>
-    <span>⏱ <span id="uptimeVal">--</span></span>
-  </div>
-  <div class="updated" id="updatedAt"></div>
+  <div class="footer">最后更新 <span id="updatedAt">--:--:--</span></div>
 </div>
 
 <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 <script>
-  const broker = 'wss://broker.emqx.io:8084/mqtt';
-  const statusDot = document.getElementById('statusDot');
-  const statusText = document.getElementById('statusText');
   let ledOn = false;
+  let lastTemp = null, lastHum = null;
+
+  const $ = (id) => document.getElementById(id);
+  const broker = 'wss://broker.emqx.io:8084/mqtt';
 
   const client = mqtt.connect(broker, {
-    clientId: 'web_' + Math.random().toString(16).slice(2, 10),
+    clientId: 'dash_' + Math.random().toString(16).slice(2, 10),
     clean: true,
     connectTimeout: 10000,
     reconnectPeriod: 5000
   });
 
+  // ---- 连接状态 ----
   client.on('connect', () => {
-    statusDot.className = 'dot online';
-    statusText.textContent = '已连接';
+    $('connDot').classList.add('live');
+    $('connText').textContent = '已连接';
     client.subscribe(['esp32/temp', 'esp32/hum', 'esp32/status', 'esp32/led']);
   });
 
   client.on('reconnect', () => {
-    statusDot.className = 'dot offline';
-    statusText.textContent = '重连中...';
+    $('connDot').classList.remove('live');
+    $('connText').textContent = '重连中';
   });
 
   client.on('offline', () => {
-    statusDot.className = 'dot offline';
-    statusText.textContent = '已断开';
+    $('connDot').classList.remove('live');
+    $('connText').textContent = '已断开';
   });
 
+  // ---- 消息处理 ----
   client.on('message', (topic, payload) => {
     const msg = payload.toString();
     const now = new Date();
-    const time = [now.getHours(), now.getMinutes(), now.getSeconds()]
+    const ts = [now.getHours(), now.getMinutes(), now.getSeconds()]
       .map(n => String(n).padStart(2, '0')).join(':');
 
     if (topic === 'esp32/temp') {
-      document.getElementById('tempVal').textContent = parseFloat(msg).toFixed(1);
+      const v = parseFloat(msg);
+      updateTemp(v);
     } else if (topic === 'esp32/hum') {
-      document.getElementById('humVal').textContent = parseFloat(msg).toFixed(0);
+      const v = parseFloat(msg);
+      updateHum(v);
     } else if (topic === 'esp32/status') {
       try {
-        const data = JSON.parse(msg);
-        document.getElementById('tempVal').textContent = parseFloat(data.temp).toFixed(1);
-        document.getElementById('humVal').textContent = parseFloat(data.hum).toFixed(0);
-        document.getElementById('rssiVal').textContent = data.rssi + ' dBm';
-        document.getElementById('uptimeVal').textContent = Math.floor(data.uptime / 60) + ' 分';
+        const d = JSON.parse(msg);
+        updateTemp(parseFloat(d.temp));
+        updateHum(parseFloat(d.hum));
+        updateSignal(d.rssi);
+        $('uptimeVal').textContent = Math.floor(d.uptime / 60) + ' 分钟';
       } catch(e) {}
     } else if (topic === 'esp32/led') {
       try {
-        const data = JSON.parse(msg);
-        ledOn = data.led === 'on';
+        const d = JSON.parse(msg);
+        ledOn = d.led === 'on';
         updateLedUI();
       } catch(e) {}
     }
 
-    document.getElementById('updatedAt').textContent = '更新于 ' + time;
+    $('updatedAt').textContent = ts;
   });
 
+  // ---- 温度 ----
+  function updateTemp(v) {
+    if (isNaN(v)) return;
+    $('tempVal').textContent = v.toFixed(1);
+    const trend = $('tempTrend');
+    if (lastTemp !== null) {
+      const diff = v - lastTemp;
+      if (Math.abs(diff) >= 0.1) {
+        trend.textContent = (diff > 0 ? '↑' : '↓') + Math.abs(diff).toFixed(1) + '°C';
+        trend.style.color = diff > 0 ? 'var(--warm)' : 'var(--accent)';
+      }
+    }
+    lastTemp = v;
+  }
+
+  function updateHum(v) {
+    if (isNaN(v)) return;
+    $('humVal').textContent = Math.round(v);
+    const trend = $('humTrend');
+    if (lastHum !== null) {
+      const diff = Math.round(v - lastHum);
+      if (Math.abs(diff) >= 1) {
+        trend.textContent = (diff > 0 ? '↑' : '↓') + Math.abs(diff) + '%';
+        trend.style.color = diff > 0 ? 'var(--accent)' : 'var(--warm)';
+      }
+    }
+    lastHum = v;
+  }
+
+  // ---- WiFi 信号 ----
+  function updateSignal(rssi) {
+    const bars = document.querySelectorAll('#sigBars .sig-bar');
+    let n = 0;
+    if (rssi > -50) n = 4;
+    else if (rssi > -60) n = 3;
+    else if (rssi > -70) n = 2;
+    else if (rssi > -80) n = 1;
+    bars.forEach((b, i) => b.classList.toggle('hot', i < n));
+  }
+
+  // ---- LED 控制 ----
   function toggleLed() {
     ledOn = !ledOn;
     updateLedUI();
-    const cmd = JSON.stringify({ led: ledOn ? 'on' : 'off' });
-    client.publish('esp32/cmd', cmd);
+    client.publish('esp32/cmd', JSON.stringify({ led: ledOn ? 'on' : 'off' }));
+    showToast(ledOn ? 'LED 已打开' : 'LED 已关闭');
   }
 
   function updateLedUI() {
-    const display = document.getElementById('ledDisplay');
-    const btn = document.getElementById('ledBtn');
+    const bulb = $('ledBulb');
+    const sw = $('ledSwitch');
+    const label = $('ledLabel');
     if (ledOn) {
-      display.className = 'led-display on';
-      btn.className = 'led-btn on';
-      btn.textContent = '关闭 LED';
+      bulb.className = 'led-bulb on';
+      sw.className = 'led-switch on';
+      label.innerHTML = '指示灯<span> 已开启</span>';
     } else {
-      display.className = 'led-display off';
-      btn.className = 'led-btn off';
-      btn.textContent = '打开 LED';
+      bulb.className = 'led-bulb off';
+      sw.className = 'led-switch off';
+      label.innerHTML = '指示灯<span> 已关闭</span>';
     }
+  }
+
+  // ---- Toast ----
+  let toastTimer;
+  function showToast(msg) {
+    const el = $('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 1800);
   }
 </script>
 </body>
