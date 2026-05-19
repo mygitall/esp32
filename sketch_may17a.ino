@@ -37,8 +37,8 @@ const unsigned long MQTT_INTERVAL = 5000;  // 每 5 秒发布一次
 // HTTP POST 上报（存入 PHP 虚拟主机 MySQL）
 const char* HTTP_REPORT_URL = "https://www.sseeee.com/esp32/mmq/receiver.php";
 
-// PushDeer 微信推送配置
-const char* PUSHDEER_KEY = "PDU41451T5iKoPmpeiumcfCkvMOYBMnFsN2NGEG7z";
+// PushDeer 推送配置（多个 Key 逗号分隔，Android + iOS 同时收到）
+const char* PUSHDEER_KEY = "PDU41451T5iKoPmpeiumcfCkvMOYBMnFsN2NGEG7z,PDU41456TsHlumkjoNeKlr07pPIT3A2xnioEtqiDY";
 const float WX_ALERT_TEMP = 30.0;     // 超过此温度触发微信推送
 const unsigned long WX_COOLDOWN = 600000;  // 10 分钟内不重复推送
 unsigned long lastWxAlert = 0;
