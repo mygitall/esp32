@@ -226,7 +226,19 @@
   <div class="section">
     <div class="section-title">
       📈 历史曲线
-      <button class="btn-sm" onclick="exportCSV()">📥 导出 CSV</button>
+      <div style="display:flex;gap:6px">
+        <button class="btn-sm" onclick="loadHistory('today')">今天</button>
+        <button class="btn-sm" onclick="loadHistory('yesterday')">昨天</button>
+        <button class="btn-sm" onclick="loadHistory('7days')">近7天</button>
+        <button class="btn-sm" onclick="exportCSV()">📥 CSV</button>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;font-size:0.72rem;color:var(--text2);flex-wrap:wrap">
+      <input type="date" id="histDate" style="padding:4px 8px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:0.7rem" onchange="loadHistory('date')">
+      <input type="time" id="histFrom" value="00:00" style="padding:4px 8px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:0.7rem;width:60px" onchange="loadHistory('date')">
+      <span>—</span>
+      <input type="time" id="histTo" value="23:59" style="padding:4px 8px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:0.7rem;width:60px" onchange="loadHistory('date')">
+      <span id="histCount" style="color:var(--text3)"></span>
     </div>
     <div class="chart-wrap"><canvas id="chartCanvas"></canvas></div>
   </div>
@@ -279,6 +291,7 @@
   // ==================== 配置 ====================
   const broker = 'wss://broker.emqx.io:8084/mqtt';
   const MAX_HISTORY = 720; // 1小时 (720 * 5s)
+  const API_BASE = '/mmq/api.php';  // PHP API 地址
 
   // ==================== 状态 ====================
   let ledOn = false;
@@ -375,6 +388,7 @@
 
   // ==================== 历史数据 ====================
   function addHistory(ts, temp, hum) {
+    if (historyMode !== 'live') return;
     history.push({ ts: ts.getTime(), temp, hum });
     if (history.length > MAX_HISTORY) history.shift();
     updateChart();
@@ -557,6 +571,66 @@
     else { btn.className = 'toggle off'; st.textContent = '已关闭'; }
   }
 
+  // ==================== 加载历史数据 ====================
+  let historyMode = 'live'; // 'live' | 'history'
+
+  function setHistoryDate() {
+    const d = new Date();
+    $('histDate').value = d.toISOString().slice(0,10);
+  }
+
+  async function loadHistory(mode) {
+    let params = '';
+    const today = new Date().toISOString().slice(0,10);
+
+    if (mode === 'today') {
+      params = `?date=${today}`;
+    } else if (mode === 'yesterday') {
+      const y = new Date(Date.now() - 86400000).toISOString().slice(0,10);
+      params = `?date=${y}`;
+    } else if (mode === '7days') {
+      params = '?range=7days&format=hourly';
+    } else if (mode === 'date') {
+      const date = $('histDate').value;
+      const from = $('histFrom').value;
+      const to = $('histTo').value;
+      if (!date) return;
+      params = `?date=${date}&from=${from}&to=${to}`;
+    }
+
+    try {
+      const res = await fetch(API_BASE + params);
+      const json = await res.json();
+      if (json.status === 'ok' && json.data.length > 0) {
+        historyMode = 'history';
+        $('histCount').textContent = `${json.data.length} 条`;
+        renderHistory(json.data);
+      } else {
+        $('histCount').textContent = '无数据';
+      }
+    } catch(e) {
+      $('histCount').textContent = 'API 不可用';
+      console.log('API 未连接，使用实时数据');
+    }
+  }
+
+  function renderHistory(data) {
+    if (!chart) return;
+    chart.data.labels = data.map(p => {
+      const d = new Date(p.ts);
+      if (data.length > 100) {
+        return [d.getMonth()+1, d.getDate()].map(n=>String(n).padStart(2,'0')).join('/') + ' ' + [d.getHours(), d.getMinutes()].map(n=>String(n).padStart(2,'0')).join(':');
+      }
+      return [d.getHours(), d.getMinutes(), d.getSeconds()].map(n=>String(n).padStart(2,'0')).join(':');
+    });
+    chart.data.datasets[0].data = data.map(p => p.temp);
+    chart.data.datasets[1].data = data.map(p => p.hum);
+    chart.update();
+    // 切换回实时数据（30 秒后自动恢复）
+    clearTimeout(window._histTimer);
+    window._histTimer = setTimeout(() => { historyMode = 'live'; $('histCount').textContent = ''; }, 30000);
+  }
+
   // ==================== CSV 导出 ====================
   function exportCSV() {
     if (history.length === 0) { showToast('暂无数据可导出'); return; }
@@ -599,6 +673,7 @@
   }, { passive: false });
 
   // ==================== 启动 ====================
+  setHistoryDate();
   requestNotify();
   initChart();
 </script>
