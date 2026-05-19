@@ -34,12 +34,16 @@ const char* mqtt_topic_led = "esp32/led";
 const char* mqtt_topic_cmd = "esp32/cmd";
 const unsigned long MQTT_INTERVAL = 5000;  // 每 5 秒发布一次
 
+// HTTP POST 上报（存入 PHP 虚拟主机 MySQL）
+const char* HTTP_REPORT_URL = "https://www.sseeee.com/esp32/mmq/receiver.php";
+
 // ==================== 引入库 ====================
 
 #include <WiFi.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <PubSubClient.h>
+#include <HTTPClient.h>
 #include <ArduinoOTA.h>
 #ifdef USE_DHT
 #include <DHT.h>
@@ -953,6 +957,20 @@ void connectMQTT() {
   }
 }
 
+// HTTP POST 上报到 PHP 虚拟主机
+void httpReport(String json) {
+  HTTPClient http;
+  http.begin(HTTP_REPORT_URL);
+  http.addHeader("Content-Type", "application/json");
+  int code = http.POST(json);
+  if (code > 0) {
+    Serial.printf("HTTP 上报: %d\n", code);
+  } else {
+    Serial.printf("HTTP 失败: %s\n", http.errorToString(code).c_str());
+  }
+  http.end();
+}
+
 void publishSensorData() {
   String json = "{";
 
@@ -991,6 +1009,9 @@ void publishSensorData() {
 
   Serial.print("MQTT 发布: ");
   Serial.println(json);
+
+  // HTTP POST 上报
+  httpReport(json);
 }
 
 // ==================== 自动模式（传感器联动） ====================
