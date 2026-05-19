@@ -762,11 +762,26 @@
     if (e.ctrlKey) e.preventDefault();
   }, { passive: false });
 
+  // ==================== 秒开预加载 ====================
+  async function preloadLatest() {
+    try {
+      const res = await fetch(API_BASE + '?latest=1');
+      const json = await res.json();
+      if (json.latest && json.latest.temp !== null) {
+        updateTemp(json.latest.temp);
+        updateHum(json.latest.hum);
+        if (json.latest.rssi) $('rssiVal').textContent = json.latest.rssi + ' dBm';
+        $('updatedAt').textContent = '缓存';
+      }
+    } catch(e) {}
+  }
+
   // ==================== 启动 ====================
   setHistoryDate();
   requestNotify();
   initChart();
   loadCache();
+  preloadLatest();
   loadHistory('today');
 </script>
 <script>

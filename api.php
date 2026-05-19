@@ -22,8 +22,16 @@ require_once __DIR__ . '/config.php';
 
 try {
     $db = getDB();
-    $params = parseParams();
 
+    // 最新一条：秒开缓存用
+    if (($_GET['latest'] ?? '') === '1') {
+        $stmt = $db->query('SELECT recorded_at AS ts, temperature AS temp, humidity AS hum, rssi FROM sensor_data ORDER BY id DESC LIMIT 1');
+        $row = $stmt->fetch();
+        echo json_encode(['status' => 'ok', 'latest' => $row ?: null], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    $params = parseParams();
     $data = queryData($db, $params);
     echo json_encode([
         'status' => 'ok',
