@@ -13,6 +13,5 @@ CREATE TABLE IF NOT EXISTS sensor_data (
   ip VARCHAR(45) NULL COMMENT 'ESP32 IP',
   recorded_at DATETIME NOT NULL COMMENT '记录时间',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_recorded (recorded_at),
-  INDEX idx_day (DATE(recorded_at))
+  INDEX idx_recorded (recorded_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='传感器历史数据';

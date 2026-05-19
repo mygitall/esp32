@@ -17,10 +17,14 @@ require_once __DIR__ . '/mqtt_client.php';
 set_time_limit(0);
 date_default_timezone_set('Asia/Shanghai');
 
+$isCLI = php_sapi_name() === 'cli';
 $mode = $argv[1] ?? ($_GET['mode'] ?? 'daemon');
 
 if ($mode === 'cron') {
+    // Web 模式下先缓冲输出，避免 "headers already sent"
+    if (!$isCLI) ob_start();
     collectBriefly();
+    if (!$isCLI) ob_clean();
 } else {
     runDaemon();
 }

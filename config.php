@@ -1,8 +1,8 @@
 <?php
 // ==================== 数据库配置 ====================
 // 上传虚拟主机时修改这里
-define('DB_HOST', 'localhost');
-define('DB_PORT', '3306');
+define('DB_HOST', '127.0.0.1');
+define('DB_PORT', '8889');
 define('DB_NAME', 'esp32_monitor');
 define('DB_USER', 'root');
 define('DB_PASS', 'root');
