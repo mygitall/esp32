@@ -179,6 +179,18 @@
     text-align: center; font-size: 0.68rem; color: var(--text3); padding: 6px;
   }
 
+
+  /* ---- 断线蒙版 ---- */
+  .dc-overlay {
+    display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(11,14,20,0.85); z-index: 100;
+    justify-content: center; align-items: center; flex-direction: column; gap: 12px;
+  }
+  .dc-overlay.show { display: flex; }
+  .dc-overlay .dc-icon { font-size: 3rem; }
+  .dc-overlay .dc-msg { font-size: 0.9rem; color: #8b8f9a; }
+  .dc-overlay .dc-sub { font-size: 0.7rem; color: #5a5e6a; }
+  .body-disconnected { filter: grayscale(60%) opacity(0.6); transition: all 0.5s; }
   /* ---- Toast ---- */
   .toast {
     position: fixed; top: 20px; left: 50%; transform: translateX(-50%) translateY(-120px);
@@ -343,10 +355,34 @@
     $('connText').textContent = '已断开';
   });
 
+  // ==================== 断线检测 ====================
+  const DISCONNECT_TIMEOUT = 30000; // 30 秒
+  let lastDataTime = Date.now();
+  let disconnected = false;
+
+  function checkDisconnect() {
+    const elapsed = Date.now() - lastDataTime;
+    if (elapsed >= DISCONNECT_TIMEOUT && !disconnected) {
+      disconnected = true;
+      $('dcOverlay').classList.add('show');
+      document.body.classList.add('body-disconnected');
+      sendNotify('ESP32 连接中断', '超过 30 秒未收到数据，请检查设备');
+    } else if (elapsed < DISCONNECT_TIMEOUT && disconnected) {
+      disconnected = false;
+      $('dcOverlay').classList.remove('show');
+      document.body.classList.remove('body-disconnected');
+    }
+  }
+  setInterval(checkDisconnect, 5000); // 每 5 秒检查
+
   // ==================== 消息处理 ====================
+
+  // 收到任何数据时更新时间戳
+  function touchData() { lastDataTime = Date.now(); }
   let currentTemp = null, currentHum = null;
 
   client.on('message', (topic, payload) => {
+    touchData();
     const msg = payload.toString();
     const now = new Date();
     const ts = [now.getHours(), now.getMinutes(), now.getSeconds()]
@@ -710,5 +746,12 @@
     navigator.serviceWorker.register('sw.js');
   }
 </script>
+
+  <!-- 断线蒙版 -->
+  <div class="dc-overlay" id="dcOverlay">
+    <div class="dc-icon">📡</div>
+    <div class="dc-msg">ESP32 连接中断</div>
+    <div class="dc-sub">超过 30 秒未收到数据，请检查设备</div>
+  </div>
 </body>
 </html>
