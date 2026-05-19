@@ -37,9 +37,8 @@ const unsigned long MQTT_INTERVAL = 5000;  // 每 5 秒发布一次
 // HTTP POST 上报（存入 PHP 虚拟主机 MySQL）
 const char* HTTP_REPORT_URL = "https://www.sseeee.com/esp32/mmq/receiver.php";
 
-// PushDeer 推送配置（Android + iOS 分别发送）
-const char* PUSHDEER_KEY_ANDROID = "PDU41451T5iKoPmpeiumcfCkvMOYBMnFsN2NGEG7z";
-const char* PUSHDEER_KEY_IOS = "PDU41456TsHlumkjoNeKlr07pPIT3A2xnioEtqiDY";
+// PushDeer 推送配置（一个 Key 推送到所有设备）
+const char* PUSHDEER_KEY = "PDU41451T5iKoPmpeiumcfCkvMOYBMnFsN2NGEG7z";
 const float WX_ALERT_TEMP = 30.0;     // 超过此温度触发微信推送
 const unsigned long WX_COOLDOWN = 600000;  // 10 分钟内不重复推送
 unsigned long lastWxAlert = 0;
@@ -997,32 +996,26 @@ String urlEncode(String str) {
 }
 
 // PushDeer 推送
-void pushDeerSend(const char* key, String title, String body) {
-  HTTPClient http;
-  http.begin("https://api2.pushdeer.com/message/push");
-  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-  String postData = "pushkey=" + String(key)
-      + "&text=" + urlEncode(title)
-      + "&desp=" + urlEncode(body)
-      + "&type=text";
-  int code = http.POST(postData);
-  if (code > 0) Serial.printf("PushDeer OK(%d) ", code);
-  else Serial.printf("PushDeer 失败 ");
-  http.end();
-}
-
 void wxAlert(float temp, float hum) {
   unsigned long now = millis();
   if (lastWxAlert > 0 && (now - lastWxAlert) < WX_COOLDOWN) return;
   lastWxAlert = now;
 
+  HTTPClient http;
+  http.begin("https://api2.pushdeer.com/message/push");
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+
   String title = "ESP32 温度告警 " + String(temp, 1) + "°C";
   String body = "温度: " + String(temp, 1) + "°C\\n湿度: " + String(hum, 0) + "%\\nWiFi信号: " + String(WiFi.RSSI()) + " dBm";
+  String postData = "pushkey=" + String(PUSHDEER_KEY)
+      + "&text=" + urlEncode(title)
+      + "&desp=" + urlEncode(body)
+      + "&type=text";
 
-  Serial.print("PushDeer: ");
-  pushDeerSend(PUSHDEER_KEY_ANDROID, title, body);
-  pushDeerSend(PUSHDEER_KEY_IOS, title, body);
-  Serial.println();
+  int code = http.POST(postData);
+  if (code > 0) Serial.printf("PushDeer OK(%d)\n", code);
+  else Serial.printf("PushDeer 失败: %s\n", http.errorToString(code).c_str());
+  http.end();
 }
 
 void publishSensorData() {
