@@ -37,8 +37,8 @@ const unsigned long MQTT_INTERVAL = 5000;  // 每 5 秒发布一次
 // HTTP POST 上报（存入 PHP 虚拟主机 MySQL）
 const char* HTTP_REPORT_URL = "https://www.sseeee.com/esp32/mmq/receiver.php";
 
-// Server酱 微信推送配置
-const char* SCT_KEY = "SCT351678Ts3mM72gZjj2xbLv5r8zMKPlx";
+// PushDeer 微信推送配置
+const char* PUSHDEER_KEY = "PDU41451T5iKoPmpeiumcfCkvMOYBMnFsN2NGEG7z";
 const float WX_ALERT_TEMP = 30.0;     // 超过此温度触发微信推送
 const unsigned long WX_COOLDOWN = 600000;  // 10 分钟内不重复推送
 unsigned long lastWxAlert = 0;
@@ -995,28 +995,28 @@ String urlEncode(String str) {
   return out;
 }
 
-// Server酱 微信推送
+// PushDeer 微信推送
 void wxAlert(float temp, float hum) {
   unsigned long now = millis();
   if (lastWxAlert > 0 && (now - lastWxAlert) < WX_COOLDOWN) return;  // 冷却期
   lastWxAlert = now;
 
   HTTPClient http;
-  String url = "https://sctapi.ftqq.com/";
-  url += SCT_KEY;
-  url += ".send";
-  http.begin(url);
+  http.begin("https://api2.pushdeer.com/message/push");
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
   String title = "ESP32 温度告警 " + String(temp, 1) + "°C";
   String body = "温度: " + String(temp, 1) + "°C\\n湿度: " + String(hum, 0) + "%\\nWiFi信号: " + String(WiFi.RSSI()) + " dBm";
-  String postData = "title=" + urlEncode(title) + "&desp=" + urlEncode(body);
+  String postData = "pushkey=" + String(PUSHDEER_KEY)
+      + "&text=" + urlEncode(title)
+      + "&desp=" + urlEncode(body)
+      + "&type=text";
 
   int code = http.POST(postData);
   if (code > 0) {
-    Serial.printf("微信推送: 成功 (%d)\n", code);
+    Serial.printf("PushDeer 推送成功 (%d)\n", code);
   } else {
-    Serial.printf("微信推送失败: %s\n", http.errorToString(code).c_str());
+    Serial.printf("PushDeer 推送失败: %s\n", http.errorToString(code).c_str());
   }
   http.end();
 }
