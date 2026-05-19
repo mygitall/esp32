@@ -622,11 +622,20 @@
         renderHistory(json.data);
       } else {
         $('histCount').textContent = '无数据';
+        clearChart();
       }
     } catch(e) {
       $('histCount').textContent = 'API 不可用';
-      console.log('API 未连接，使用实时数据');
+      clearChart();
     }
+  }
+
+  function clearChart() {
+    if (!chart) return;
+    chart.data.labels = [];
+    chart.data.datasets[0].data = [];
+    chart.data.datasets[1].data = [];
+    chart.update();
   }
 
   function renderHistory(data) {
