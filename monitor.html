@@ -535,6 +535,7 @@
       }
     }
     lastTemp = v;
+    saveCache();
   }
 
   function updateHum(v) {
@@ -549,10 +550,36 @@
       }
     }
     lastHum = v;
+    saveCache();
+  }
+
+  function saveCache() {
+    try {
+      localStorage.setItem('esp32_cache', JSON.stringify({
+        temp: lastTemp, hum: lastHum, rssi: $('rssiVal').textContent,
+        uptime: $('uptimeVal').textContent, ip: $('ipVal').textContent,
+        led: ledOn, ts: Date.now()
+      }));
+    } catch(e) {}
+  }
+  function loadCache() {
+    try {
+      const d = JSON.parse(localStorage.getItem('esp32_cache'));
+      if (d && Date.now() - d.ts < 86400000) { // 24小时内有效
+        if (d.temp !== null) updateTemp(d.temp);
+        if (d.hum !== null) updateHum(d.hum);
+        if (d.rssi) $('rssiVal').textContent = d.rssi;
+        if (d.uptime) $('uptimeVal').textContent = d.uptime;
+        if (d.ip) $('ipVal').textContent = d.ip;
+        ledOn = d.led; updateLedUI();
+        $('updatedAt').textContent = new Date(d.ts).toLocaleTimeString('zh-CN', {hour12: false});
+      }
+    } catch(e) {}
   }
 
   function updateSignal(rssi) {
     $('rssiVal').textContent = rssi + ' dBm';
+    saveCache();
   }
 
   // ==================== 浏览器推送通知 ====================
@@ -620,6 +647,7 @@
     const st = $('ledStatus');
     if (ledOn) { btn.className = 'toggle on'; st.textContent = '已开启'; }
     else { btn.className = 'toggle off'; st.textContent = '已关闭'; }
+    saveCache();
   }
 
   // ==================== 加载历史数据 ====================
@@ -738,8 +766,8 @@
   setHistoryDate();
   requestNotify();
   initChart();
-  // 自动加载今天的历史数据
-  setTimeout(() => loadHistory('today'), 1500);
+  loadCache();
+  loadHistory('today');
 </script>
 <script>
   if ('serviceWorker' in navigator) {
