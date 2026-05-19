@@ -344,6 +344,7 @@
         const d = JSON.parse(msg);
         if (d.temp !== null) { currentTemp = parseFloat(d.temp); updateTemp(currentTemp); }
         if (d.hum !== null) { currentHum = parseFloat(d.hum); updateHum(currentHum); }
+        $('ipVal').textContent = d.ip || '--';
         updateSignal(d.rssi);
         $('uptimeVal').textContent = Math.floor(d.uptime / 60) + '分钟';
       } catch(e) {}
