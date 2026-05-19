@@ -483,6 +483,31 @@
     $('rssiVal').textContent = rssi + ' dBm';
   }
 
+  // ==================== 浏览器推送通知 ====================
+  let notifyEnabled = false;
+  let lastNotifyTime = 0;
+  const NOTIFY_COOLDOWN = 120000; // 2 分钟内不重复推送
+
+  function requestNotify() {
+    if ('Notification' in window) {
+      if (Notification.permission === 'granted') {
+        notifyEnabled = true;
+      } else if (Notification.permission !== 'denied') {
+        Notification.requestPermission().then(p => {
+          notifyEnabled = (p === 'granted');
+        });
+      }
+    }
+  }
+
+  function sendNotify(title, body) {
+    if (!notifyEnabled) return;
+    const now = Date.now();
+    if (now - lastNotifyTime < NOTIFY_COOLDOWN) return;
+    lastNotifyTime = now;
+    try { new Notification(title, { body, icon: '🌡️', tag: 'esp32-alert' }); } catch(e) {}
+  }
+
   // ==================== 告警检查 ====================
   function checkAlerts() {
     const bar = $('alertBar');
@@ -501,6 +526,8 @@
     if (alert) {
       bar.className = 'alert-bar show ' + alert.cls;
       bar.textContent = alert.msg;
+      // 推送浏览器通知
+      sendNotify('ESP32 环境告警', alert.msg.replace(/[🚨⚠️]/g, '').trim());
     } else {
       bar.className = 'alert-bar';
     }
@@ -554,6 +581,7 @@
   }
 
   // ==================== 启动 ====================
+  requestNotify();
   initChart();
 </script>
 </body>
