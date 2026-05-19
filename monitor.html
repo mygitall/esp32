@@ -587,6 +587,17 @@
     toastTimer = setTimeout(() => el.classList.remove('show'), 1800);
   }
 
+  // ==================== 禁止双指缩放 ====================
+  document.addEventListener('gesturestart', e => e.preventDefault(), { passive: false });
+  document.addEventListener('gesturechange', e => e.preventDefault(), { passive: false });
+  document.addEventListener('gestureend', e => e.preventDefault(), { passive: false });
+  document.addEventListener('touchstart', e => {
+    if (e.touches.length > 1) e.preventDefault();
+  }, { passive: false });
+  document.addEventListener('wheel', e => {
+    if (e.ctrlKey) e.preventDefault();
+  }, { passive: false });
+
   // ==================== 启动 ====================
   requestNotify();
   initChart();
