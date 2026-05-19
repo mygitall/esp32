@@ -39,7 +39,7 @@ const char* HTTP_REPORT_URL = "https://www.sseeee.com/esp32/mmq/receiver.php";
 
 // Server酱 微信推送配置
 const char* SCT_KEY = "SCT351678Ts3mM72gZjj2xbLv5r8zMKPlx";
-const float WX_ALERT_TEMP = 35.0;     // 超过此温度触发微信推送
+const float WX_ALERT_TEMP = 30.0;     // 超过此温度触发微信推送
 const unsigned long WX_COOLDOWN = 600000;  // 10 分钟内不重复推送
 unsigned long lastWxAlert = 0;
 
@@ -998,7 +998,7 @@ String urlEncode(String str) {
 // Server酱 微信推送
 void wxAlert(float temp, float hum) {
   unsigned long now = millis();
-  if (now - lastWxAlert < WX_COOLDOWN) return;  // 冷却期内不重复发
+  if (lastWxAlert > 0 && (now - lastWxAlert) < WX_COOLDOWN) return;  // 冷却期
   lastWxAlert = now;
 
   HTTPClient http;
