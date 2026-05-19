@@ -37,6 +37,12 @@ const unsigned long MQTT_INTERVAL = 5000;  // 每 5 秒发布一次
 // HTTP POST 上报（存入 PHP 虚拟主机 MySQL）
 const char* HTTP_REPORT_URL = "https://www.sseeee.com/esp32/mmq/receiver.php";
 
+// Server酱 微信推送配置
+const char* SCT_KEY = "SCT351678Ts3mM72gZjj2xbLv5r8zMKPlx";
+const float WX_ALERT_TEMP = 35.0;     // 超过此温度触发微信推送
+const unsigned long WX_COOLDOWN = 600000;  // 10 分钟内不重复推送
+unsigned long lastWxAlert = 0;
+
 // ==================== 引入库 ====================
 
 #include <WiFi.h>
@@ -971,6 +977,50 @@ void httpReport(String json) {
   http.end();
 }
 
+// 简易 URL 编码（用于 Server酱中文参数）
+String urlEncode(String str) {
+  String out = "";
+  for (int i = 0; i < str.length(); i++) {
+    char c = str.charAt(i);
+    if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+      out += c;
+    } else if (c == ' ') {
+      out += '+';
+    } else {
+      char hex[4];
+      sprintf(hex, "%%%02X", (unsigned char)c);
+      out += hex;
+    }
+  }
+  return out;
+}
+
+// Server酱 微信推送
+void wxAlert(float temp, float hum) {
+  unsigned long now = millis();
+  if (now - lastWxAlert < WX_COOLDOWN) return;  // 冷却期内不重复发
+  lastWxAlert = now;
+
+  HTTPClient http;
+  String url = "https://sctapi.ftqq.com/";
+  url += SCT_KEY;
+  url += ".send";
+  http.begin(url);
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+
+  String title = "ESP32 温度告警 " + String(temp, 1) + "°C";
+  String body = "温度: " + String(temp, 1) + "°C\\n湿度: " + String(hum, 0) + "%\\nWiFi信号: " + String(WiFi.RSSI()) + " dBm";
+  String postData = "title=" + urlEncode(title) + "&desp=" + urlEncode(body);
+
+  int code = http.POST(postData);
+  if (code > 0) {
+    Serial.printf("微信推送: 成功 (%d)\n", code);
+  } else {
+    Serial.printf("微信推送失败: %s\n", http.errorToString(code).c_str());
+  }
+  http.end();
+}
+
 void publishSensorData() {
   String json = "{";
 
@@ -1003,6 +1053,8 @@ void publishSensorData() {
   json += "}";
   mqttClient.publish(mqtt_topic_status, json.c_str());
 
+	  // 微信推送（温度超阈值）
+	  if (temp >= WX_ALERT_TEMP) wxAlert(temp, hum);
   // 上报 LED 状态
   String ledJson = "{\"led\":\"" + String(ledState ? "on" : "off") + "\",\"brightness\":" + String(ledBrightness) + "}";
   mqttClient.publish(mqtt_topic_led, ledJson.c_str());
