@@ -356,7 +356,7 @@
   });
 
   // ==================== 断线检测 ====================
-  const DISCONNECT_TIMEOUT = 30000; // 30 秒
+  const DISCONNECT_TIMEOUT = 12000; // 12 秒
   let lastDataTime = Date.now();
   let disconnected = false;
 
@@ -366,14 +366,14 @@
       disconnected = true;
       $('dcOverlay').classList.add('show');
       document.body.classList.add('body-disconnected');
-      sendNotify('ESP32 连接中断', '超过 30 秒未收到数据，请检查设备');
+      sendNotify('ESP32 连接中断', '超过 12 秒未收到数据，请检查设备');
     } else if (elapsed < DISCONNECT_TIMEOUT && disconnected) {
       disconnected = false;
       $('dcOverlay').classList.remove('show');
       document.body.classList.remove('body-disconnected');
     }
   }
-  setInterval(checkDisconnect, 5000); // 每 5 秒检查
+  setInterval(checkDisconnect, 2000); // 每 2 秒检查
 
   // ==================== 消息处理 ====================
 
@@ -751,7 +751,7 @@
   <div class="dc-overlay" id="dcOverlay">
     <div class="dc-icon">📡</div>
     <div class="dc-msg">ESP32 连接中断</div>
-    <div class="dc-sub">超过 30 秒未收到数据，请检查设备</div>
+    <div class="dc-sub">超过 12 秒未收到数据，请检查设备</div>
   </div>
 </body>
 </html>
