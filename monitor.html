@@ -290,7 +290,7 @@
 <script>
   // ==================== 配置 ====================
   const broker = 'wss://broker.emqx.io:8084/mqtt';
-  const MAX_HISTORY = 720; // 1小时 (720 * 5s)
+  const MAX_HISTORY = 20000; // 全天 (5s 间隔 24h = 17280)
   const API_BASE = 'https://www.sseeee.com/esp32/mmq/api.php';  // PHP API 地址
 
   // ==================== 状态 ====================
@@ -391,7 +391,22 @@
     if (historyMode !== 'live') return;
     history.push({ ts: ts.getTime(), temp, hum });
     if (history.length > MAX_HISTORY) history.shift();
-    updateChart();
+    // 只更新最后一个点，不重绘整个图表（性能优化）
+    if (chart && historyMode === 'live') {
+      const last = history[history.length - 1];
+      const d = new Date(last.ts);
+      const label = [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2,'0')).join(':');
+      chart.data.labels.push(label);
+      chart.data.datasets[0].data.push(last.temp);
+      chart.data.datasets[1].data.push(last.hum);
+      // 只保留最近 60 个标签在图表上（滑动窗口）
+      while (chart.data.labels.length > 60) {
+        chart.data.labels.shift();
+        chart.data.datasets[0].data.shift();
+        chart.data.datasets[1].data.shift();
+      }
+      chart.update('none');
+    }
   }
 
   // ==================== Chart.js ====================
@@ -616,9 +631,11 @@
 
   function renderHistory(data) {
     if (!chart) return;
+    historyMode = 'history';
+    // 显示全部数据点
     chart.data.labels = data.map(p => {
-      const d = new Date(p.ts);
-      if (data.length > 100) {
+      const d = new Date(p.ts.replace(' ','T') + '+08:00');
+      if (data.length > 200) {
         return [d.getMonth()+1, d.getDate()].map(n=>String(n).padStart(2,'0')).join('/') + ' ' + [d.getHours(), d.getMinutes()].map(n=>String(n).padStart(2,'0')).join(':');
       }
       return [d.getHours(), d.getMinutes(), d.getSeconds()].map(n=>String(n).padStart(2,'0')).join(':');
@@ -626,9 +643,9 @@
     chart.data.datasets[0].data = data.map(p => p.temp);
     chart.data.datasets[1].data = data.map(p => p.hum);
     chart.update();
-    // 切换回实时数据（30 秒后自动恢复）
+    // 5 分钟后自动恢复实时模式
     clearTimeout(window._histTimer);
-    window._histTimer = setTimeout(() => { historyMode = 'live'; $('histCount').textContent = ''; }, 30000);
+    window._histTimer = setTimeout(() => { historyMode = 'live'; $('histCount').textContent = ''; loadHistory('today'); }, 300000);
   }
 
   // ==================== CSV 导出 ====================
@@ -676,6 +693,8 @@
   setHistoryDate();
   requestNotify();
   initChart();
+  // 自动加载今天的历史数据
+  setTimeout(() => loadHistory('today'), 1500);
 </script>
 <script>
   if ('serviceWorker' in navigator) {
