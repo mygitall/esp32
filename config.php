@@ -8,6 +8,8 @@ define('DB_USER', 'root');
 define('DB_PASS', 'root');
 define('DB_CHARSET', 'utf8mb4');
 
+date_default_timezone_set('Asia/Shanghai');  // 北京时间
+
 // ==================== MQTT 配置 ====================
 define('MQTT_BROKER', 'broker.emqx.io');
 define('MQTT_PORT', 1883);

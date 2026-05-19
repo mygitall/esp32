@@ -34,9 +34,10 @@ if (!$input) {
 
 try {
     $db = getDB();
+    $now = date('Y-m-d H:i:s');  // 北京时间
     $stmt = $db->prepare(
         'INSERT INTO sensor_data (temperature, humidity, rssi, uptime, ip, recorded_at)
-         VALUES (:temp, :hum, :rssi, :uptime, :ip, NOW())'
+         VALUES (:temp, :hum, :rssi, :uptime, :ip, :ts)'
     );
     $stmt->execute([
         'temp'   => $input['temp'] ?? null,
@@ -44,9 +45,10 @@ try {
         'rssi'   => $input['rssi'] ?? null,
         'uptime' => $input['uptime'] ?? null,
         'ip'     => $_SERVER['REMOTE_ADDR'] ?? null,
+        'ts'     => $now,
     ]);
 
-    echo json_encode(['status' => 'ok', 'ts' => date('Y-m-d H:i:s')]);
+    echo json_encode(['status' => 'ok', 'ts' => $now]);
 } catch (Exception $e) {
     http_response_code(500);
     echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
