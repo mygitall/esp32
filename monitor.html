@@ -9,6 +9,7 @@
 <link rel="manifest" href="manifest.json">
 <title>ESP32 环境监控</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -87,6 +88,7 @@
   .gauge .unit { font-size: 1rem; opacity: 0.5; font-weight: 500; }
   .gauge .lbl { font-size: 0.7rem; color: var(--text3); text-transform: uppercase; letter-spacing: 1.5px; }
   .gauge .trend { font-size: 0.7rem; margin-top: 2px; color: var(--text3); }
+  .gauge .spark { display: block; margin: 4px auto 0; opacity: 0.6; max-width: 100%; height: auto; }
 
   /* ---- Section ---- */
   .section {
@@ -103,11 +105,25 @@
     background: var(--surface2); border: 1px solid var(--border);
     color: var(--text2); cursor: pointer;
   }
-  .btn-sm:active { opacity: 0.7; }
+  .btn-sm:active { background: rgba(79,143,255,0.15); border-color: rgba(79,143,255,0.4); }
+  .btn-sm.active { background: rgba(79,143,255,0.2); border-color: rgba(79,143,255,0.45); color: #4f8fff; }
 
   /* ---- Chart ---- */
-  .chart-wrap { position: relative; height: 200px; }
+  .chart-wrap { position: relative; height: 200px; overflow: hidden; }
   .chart-wrap canvas { width: 100% !important; height: 100% !important; }
+  .crosshair {
+    display: none; position: absolute; top: 0; bottom: 0;
+    width: 1px; pointer-events: none; z-index: 10;
+    border-left: 1px dashed rgba(255,255,255,0.5);
+  }
+  .crosshair.show { display: block; }
+  .crosshair-tag {
+    position: absolute; left: 6px; padding: 2px 6px; border-radius: 4px;
+    font-size: 10px; font-weight: 700; white-space: nowrap;
+    color: #fff; pointer-events: none;
+  }
+  .crosshair-tag.temp { background: rgba(255,123,66,0.85); top: -2px; }
+  .crosshair-tag.hum  { background: rgba(79,143,255,0.85); top: 20px; }
 
   /* ---- Alert ---- */
   .alert-bar {
@@ -223,12 +239,14 @@
     <div class="gauge temp">
       <div class="icon">🌡️</div>
       <div class="val"><span id="tempVal">--</span><span class="unit">°C</span></div>
+      <canvas class="spark" id="sparkTemp" width="140" height="32"></canvas>
       <div class="lbl">温度</div>
       <div class="trend" id="tempTrend"></div>
     </div>
     <div class="gauge hum">
       <div class="icon">💧</div>
       <div class="val"><span id="humVal">--</span><span class="unit">%</span></div>
+      <canvas class="spark" id="sparkHum" width="140" height="32"></canvas>
       <div class="lbl">湿度</div>
       <div class="trend" id="humTrend"></div>
     </div>
@@ -239,9 +257,9 @@
     <div class="section-title">
       📈 历史曲线
       <div style="display:flex;gap:6px">
-        <button class="btn-sm" onclick="loadHistory('today')">今天</button>
-        <button class="btn-sm" onclick="loadHistory('yesterday')">昨天</button>
-        <button class="btn-sm" onclick="loadHistory('7days')">近7天</button>
+        <button class="btn-sm" data-mode="today" onclick="loadHistory('today')">今天</button>
+        <button class="btn-sm" data-mode="yesterday" onclick="loadHistory('yesterday')">昨天</button>
+        <button class="btn-sm" data-mode="7days" onclick="loadHistory('7days')">近7天</button>
         <button class="btn-sm" onclick="exportCSV()">📥 CSV</button>
       </div>
     </div>
@@ -252,7 +270,10 @@
       <input type="time" id="histTo" value="23:59" style="padding:4px 8px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:0.7rem;width:60px" onchange="loadHistory('date')">
       <span id="histCount" style="color:var(--text3)"></span>
     </div>
-    <div class="chart-wrap"><canvas id="chartCanvas"></canvas></div>
+    <div class="chart-wrap">
+      <canvas id="chartCanvas"></canvas>
+      <div id="crosshair" class="crosshair"><div class="crosshair-tag temp"></div><div class="crosshair-tag hum"></div></div>
+    </div>
   </div>
 
   <!-- 告警设置 -->
@@ -302,13 +323,15 @@
 <script>
   // ==================== 配置 ====================
   const broker = 'wss://broker.emqx.io:8084/mqtt';
-  const MAX_HISTORY = 20000; // 全天 (5s 间隔 24h = 17280)
+  const MAX_HISTORY = 100000; // LZ-String 压缩后约 1.5MB（10万条 ≈ 5MB 未压缩）
   const API_BASE = 'https://www.sseeee.com/esp32/mmq/api.php';  // PHP API 地址
 
   // ==================== 状态 ====================
   let ledOn = false;
   let lastTemp = null, lastHum = null;
   let history = []; // [{ts, temp, hum}]
+  let sparkTemp = [], sparkHum = []; // 最近 30 点用于迷你趋势线
+  const SPARK_MAX = 30;
   let thresholds = { tempMax: 35, humMin: 20, alertMode: 'both' };
 
   const $ = (id) => document.getElementById(id);
@@ -330,24 +353,37 @@
     thresholds.humMin = parseInt($('humMin').value) || 20;
     thresholds.alertMode = $('alertMode').value;
     localStorage.setItem('esp32_thresholds', JSON.stringify(thresholds));
+    if (chart) chart.update(); // 刷新阈值参考线
   }
   loadThresholds();
 
-  // ==================== MQTT 连接 ====================
+  // ==================== MQTT 连接（指数退避 3s→30s） ====================
+  let mqttReconnectAttempts = 0;
+
+  function getReconnectDelay() {
+    const d = Math.min(3000 * Math.pow(1.5, mqttReconnectAttempts), 30000);
+    mqttReconnectAttempts++;
+    return d;
+  }
+
   const client = mqtt.connect(broker, {
     clientId: 'dash_' + Math.random().toString(16).slice(2, 10),
-    clean: true, connectTimeout: 10000, reconnectPeriod: 5000
+    clean: true, connectTimeout: 10000, reconnectPeriod: 3000
   });
 
   client.on('connect', () => {
+    mqttReconnectAttempts = 0;
+    client.options.reconnectPeriod = 3000;
     $('connDot').classList.add('live');
     $('connText').textContent = '已连接';
     client.subscribe(['esp32/temp','esp32/hum','esp32/status','esp32/led']);
   });
 
   client.on('reconnect', () => {
+    const delay = getReconnectDelay();
+    client.options.reconnectPeriod = delay;
     $('connDot').classList.remove('live');
-    $('connText').textContent = '重连中';
+    $('connText').textContent = '重连中(' + Math.round(delay / 1000) + 's)';
   });
 
   client.on('offline', () => {
@@ -427,6 +463,22 @@
     if (historyMode !== 'live') return;
     history.push({ ts: ts.getTime(), temp, hum });
     if (history.length > MAX_HISTORY) history.shift();
+    // 每 20 条压缩存一次 localStorage
+    if (history.length % 20 === 0) saveHistoryToStorage();
+    // 更新迷你趋势线
+    pushSpark(sparkTemp, temp);
+    pushSpark(sparkHum, hum);
+    if (sparkTemp.length >= 2) {
+      const tMin = Math.min(...sparkTemp), tMax = Math.max(...sparkTemp);
+      const tPad = (tMax - tMin) * 0.2 || 1;
+      drawSparkline('sparkTemp', sparkTemp, '#ff7b42', tMin - tPad, tMax + tPad);
+    }
+    if (sparkHum.length >= 2) {
+      const hMin = Math.min(...sparkHum), hMax = Math.max(...sparkHum);
+      const hPad = (hMax - hMin) * 0.2 || 1;
+      drawSparkline('sparkHum', sparkHum, '#4f8fff', hMin - hPad, hMax + hPad);
+    }
+
     // 只更新最后一个点，不重绘整个图表（性能优化）
     if (chart && historyMode === 'live') {
       const last = history[history.length - 1];
@@ -485,6 +537,41 @@
         plugins: {
           legend: {
             labels: { color: '#8b8f9a', usePointStyle: true, boxWidth: 8, font: { size: 10 }, padding: 16 }
+          },
+          thresholdLine: {
+            id: 'thresholdLine',
+            afterDraw(chart) {
+              const ctx = chart.ctx, xAxis = chart.scales.x, yAxis = chart.scales.y, y1Axis = chart.scales.y1;
+              if (!xAxis || !yAxis) return;
+              ctx.save();
+              // 温度阈值线（y 轴）
+              const tempY = yAxis.getPixelForValue(thresholds.tempMax);
+              ctx.setLineDash([6, 4]);
+              ctx.strokeStyle = 'rgba(255,71,87,0.5)';
+              ctx.lineWidth = 1;
+              ctx.beginPath();
+              ctx.moveTo(xAxis.left, tempY);
+              ctx.lineTo(xAxis.right, tempY);
+              ctx.stroke();
+              ctx.fillStyle = 'rgba(255,71,87,0.7)';
+              ctx.font = '9px sans-serif';
+              ctx.fillText('⚠' + thresholds.tempMax + '°C', xAxis.right - 42, tempY - 6);
+              // 湿度阈值线（y1 轴）
+              if (y1Axis) {
+                const humY = y1Axis.getPixelForValue(thresholds.humMin);
+                ctx.beginPath();
+                ctx.moveTo(xAxis.left, humY);
+                ctx.lineTo(xAxis.right, humY);
+                ctx.stroke();
+                ctx.fillText('⚠' + thresholds.humMin + '%', xAxis.right - 38, humY - 6);
+              }
+              ctx.setLineDash([]);
+              ctx.restore();
+            }
+          },
+          crosshairLine: {
+            id: 'crosshairLine',
+            afterDraw() { /* 改用 CSS overlay，见下方 #crosshair */ }
           }
         },
         scales: {
@@ -507,6 +594,39 @@
         }
       }
     });
+
+    // 鼠标/触摸竖线跟踪（CSS overlay 方案）
+    const ch = $('crosshair'), chTemp = ch.querySelector('.crosshair-tag.temp'), chHum = ch.querySelector('.crosshair-tag.hum');
+
+    function updateCrosshair(clientX, clientY) {
+      const rect = chart.canvas.getBoundingClientRect();
+      const x = clientX - rect.left;
+      if (x < 0 || x > rect.width) { ch.classList.remove('show'); return; }
+      ch.style.left = x + 'px';
+      ch.classList.add('show');
+
+      // 反查数据点（DPR 修正）
+      const xAxis = chart.scales.x;
+      if (!xAxis || chart.data.labels.length === 0) return;
+      const dpr = window.devicePixelRatio || 1;
+      const left = xAxis.left / dpr, right = xAxis.right / dpr;
+      const step = (right - left) / Math.max(chart.data.labels.length - 1, 1);
+      const idx = Math.round((x - left) / step);
+      if (idx >= 0 && idx < chart.data.labels.length) {
+        const tv = chart.data.datasets[0].data[idx], hv = chart.data.datasets[1].data[idx];
+        chTemp.textContent = tv !== null && tv !== undefined ? tv.toFixed(1) + '°C' : '--';
+        chHum.textContent = hv !== null && hv !== undefined ? Math.round(hv) + '%' : '--';
+        chTemp.style.display = ''; chHum.style.display = '';
+      } else {
+        chTemp.style.display = 'none'; chHum.style.display = 'none';
+      }
+    }
+
+    chart.canvas.addEventListener('mousemove', (e) => updateCrosshair(e.clientX, e.clientY));
+    chart.canvas.addEventListener('mouseleave', () => ch.classList.remove('show'));
+    chart.canvas.addEventListener('touchstart', (e) => { e.preventDefault(); updateCrosshair(e.touches[0].clientX, e.touches[0].clientY); }, { passive: false });
+    chart.canvas.addEventListener('touchmove', (e) => { e.preventDefault(); updateCrosshair(e.touches[0].clientX, e.touches[0].clientY); }, { passive: false });
+    chart.canvas.addEventListener('touchend', () => ch.classList.remove('show'));
   }
 
   function updateChart() {
@@ -520,6 +640,33 @@
     chart.data.datasets[0].data = points.map(p => p.temp);
     chart.data.datasets[1].data = points.map(p => p.hum);
     chart.update('none');
+  }
+
+  // ==================== 迷你趋势线 (Sparkline) ====================
+  function pushSpark(arr, v) {
+    if (v === null || isNaN(v)) return;
+    arr.push(v);
+    if (arr.length > SPARK_MAX) arr.shift();
+  }
+
+  function drawSparkline(canvasId, data, color, minY, maxY) {
+    const c = $(canvasId); if (!c) return;
+    const w = c.width, h = c.height;
+    const ctx = c.getContext('2d');
+    ctx.clearRect(0, 0, w, h);
+    if (data.length < 2) return;
+    const pad = { t: 3, r: 2, b: 3, l: 2 };
+    const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+    const range = (maxY - minY) || 1;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    data.forEach((v, i) => {
+      const x = pad.l + (i / (data.length - 1)) * pw;
+      const y = pad.t + ph - ((v - minY) / range) * ph;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
   }
 
   // ==================== 温湿度更新 ====================
@@ -564,8 +711,11 @@
   }
   function loadCache() {
     try {
-      const d = JSON.parse(localStorage.getItem('esp32_cache'));
-      if (d && Date.now() - d.ts < 86400000) { // 24小时内有效
+      const raw = localStorage.getItem('esp32_cache');
+      if (!raw) return;
+      let d;
+      try { d = JSON.parse(raw); } catch(e) { d = JSON.parse(LZString.decompressFromUTF16(raw)); }
+      if (d && Date.now() - d.ts < 86400000) {
         if (d.temp !== null) updateTemp(d.temp);
         if (d.hum !== null) updateHum(d.hum);
         if (d.rssi) $('rssiVal').textContent = d.rssi;
@@ -575,6 +725,51 @@
         $('updatedAt').textContent = new Date(d.ts).toLocaleTimeString('zh-CN', {hour12: false});
       }
     } catch(e) {}
+  }
+
+  // ==================== 压缩历史持久化 (LZ-String) ====================
+  function saveHistoryToStorage() {
+    try {
+      const compressed = LZString.compressToUTF16(JSON.stringify(history));
+      localStorage.setItem('esp32_history', compressed);
+    } catch(e) {
+      if (e.name === 'QuotaExceededError' || String(e).indexOf('quota') > -1) {
+        history = history.slice(Math.floor(history.length / 2));
+        try { saveHistoryToStorage(); } catch(e2) {}
+      }
+    }
+  }
+
+  function loadHistoryFromStorage() {
+    try {
+      const raw = localStorage.getItem('esp32_history');
+      if (!raw) return;
+      const decompressed = LZString.decompressFromUTF16(raw);
+      if (!decompressed) return;
+      const arr = JSON.parse(decompressed);
+      if (Array.isArray(arr) && arr.length > 0) {
+        const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+        history = arr.filter(p => p.ts >= todayStart.getTime());
+        if (history.length > 0) { updateChart(); seedSparklines(); }
+      }
+    } catch(e) { localStorage.removeItem('esp32_history'); }
+  }
+
+  function seedSparklines() {
+    // 用 history 尾部最近 SPARK_MAX 个点填充迷你趋势线
+    const tail = history.slice(-SPARK_MAX);
+    sparkTemp = tail.map(p => p.temp).filter(v => v !== null && !isNaN(v));
+    sparkHum = tail.map(p => p.hum).filter(v => v !== null && !isNaN(v));
+    if (sparkTemp.length >= 2) {
+      const tMin = Math.min(...sparkTemp), tMax = Math.max(...sparkTemp);
+      const pad = (tMax - tMin) * 0.2 || 1;
+      drawSparkline('sparkTemp', sparkTemp, '#ff7b42', tMin - pad, tMax + pad);
+    }
+    if (sparkHum.length >= 2) {
+      const hMin = Math.min(...sparkHum), hMax = Math.max(...sparkHum);
+      const pad = (hMax - hMin) * 0.2 || 1;
+      drawSparkline('sparkHum', sparkHum, '#4f8fff', hMin - pad, hMax + pad);
+    }
   }
 
   function updateSignal(rssi) {
@@ -659,6 +854,15 @@
   }
 
   async function loadHistory(mode) {
+    // 按钮高亮状态切换
+    document.querySelectorAll('.btn-sm[data-mode]').forEach(b => {
+      b.classList.toggle('active', b.dataset.mode === mode);
+    });
+    // date 模式下取消所有按钮高亮
+    if (mode === 'date') {
+      document.querySelectorAll('.btn-sm[data-mode]').forEach(b => b.classList.remove('active'));
+    }
+
     let params = '';
     const today = new Date().toISOString().slice(0,10);
 
@@ -762,7 +966,7 @@
     if (e.ctrlKey) e.preventDefault();
   }, { passive: false });
 
-  // ==================== 秒开预加载 ====================
+  // ==================== 秒开预加载（PHP API） ====================
   async function preloadLatest() {
     try {
       const res = await fetch(API_BASE + '?latest=1');
@@ -776,13 +980,33 @@
     } catch(e) {}
   }
 
+  async function preloadHistory() {
+    // 首次打开拉取今天全部数据填充 history[] 和图表
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const res = await fetch(API_BASE + '?date=' + today);
+      const json = await res.json();
+      if (json.status === 'ok' && json.data.length > 0) {
+        history = json.data.map(p => ({
+          ts: new Date(p.ts.replace(' ', 'T') + '+08:00').getTime(),
+          temp: p.temp, hum: p.hum
+        }));
+        $('histCount').textContent = history.length + ' 条(API)';
+        updateChart();
+        seedSparklines();
+        // 不改变 historyMode，保持 live 以便 MQTT 续接
+      }
+    } catch(e) {}
+  }
+
   // ==================== 启动 ====================
   setHistoryDate();
   requestNotify();
   initChart();
-  loadCache();
-  preloadLatest();
-  loadHistory('today');
+  loadCache();              // 1. localStorage: 仪表读数（秒开）
+  loadHistoryFromStorage(); // 2. localStorage: 压缩的历史曲线（秒开）
+  preloadLatest();          // 3. PHP API: 最新读数
+  preloadHistory();         // 4. PHP API: 今天全部数据 + 填充 history[]
 </script>
 <script>
   if ('serviceWorker' in navigator) {
