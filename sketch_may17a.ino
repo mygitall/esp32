@@ -1156,6 +1156,8 @@ void initGPS() {
   Serial.println("GNSS 已开启（首次定位约 30s）\n");
 }
 
+void wifiLocate();  // 前向声明
+
 void readGPS() {
   gpsSerial.print("AT+CGNSINF\r\n");
   delay(300);
@@ -1184,19 +1186,43 @@ void readGPS() {
   if (f < 3) return;
 
   gpsFix = fields[0].toInt();
-  if (gpsFix <= 0) {
-    Serial.println("GPS: 未定位");
-    return;
-  }
-
   gpsLng = fields[1].toFloat();
   gpsLat = fields[2].toFloat();
   gpsAlt = fields[3].toFloat();
   gpsSpd = fields[4].toFloat();
   gpsSat = fields[7].toInt();
 
+  // GPS 坐标为空时用 WiFi 定位补充
+  if (gpsLat == 0 && gpsLng == 0) {
+    wifiLocate();
+    if (gpsLat == 0 && gpsLng == 0) {
+      gpsFix = 0;  // 两边都没定位到
+      Serial.println("GPS+WiFi: 均未定位");
+      return;
+    }
+  }
+
   Serial.printf("GPS: %.5f,%.5f alt=%.0fm spd=%.1f sat=%d\n",
     gpsLat, gpsLng, gpsAlt, gpsSpd, gpsSat);
+}
+
+void wifiLocate() {
+  HTTPClient http;
+  http.begin("http://ip-api.com/json/?fields=lat,lon");
+  http.setTimeout(5000);
+  int code = http.GET();
+  if (code == 200) {
+    String body = http.getString();
+    int li = body.indexOf("\"lat\":");
+    int ni = body.indexOf("\"lon\":");
+    if (li > 0 && ni > 0) {
+      gpsLat = body.substring(li + 6, body.indexOf(",", li)).toFloat();
+      gpsLng = body.substring(ni + 6, body.indexOf("}", ni)).toFloat();
+      gpsFix = 1;
+      Serial.printf("WiFi定位: %.4f, %.4f\n", gpsLat, gpsLng);
+    }
+  }
+  http.end();
 }
 
 #endif
