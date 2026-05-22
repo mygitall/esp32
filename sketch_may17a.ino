@@ -1122,14 +1122,33 @@ void initGNSS() {
   gnssSerial.begin(GNSS_BAUD);
   delay(500);
 
-  // 检查模块响应
+  // 先试 115200，发 AT 看有没有响应
+  Serial.println("检测 Air780EX ...");
   gnssSerial.println("AT");
   delay(300);
-  while (gnssSerial.available()) gnssSerial.read(); // 清缓冲区
+  String resp = "";
+  while (gnssSerial.available()) resp += (char)gnssSerial.read();
+  resp.trim();
+  Serial.print("115200 响应: ");
+  Serial.println(resp.length() ? resp : "(无)");
+
+  if (resp.indexOf("OK") < 0) {
+    // 切换到 9600 重试
+    Serial.println("切换到 9600 ...");
+    gnssSerial.updateBaudRate(9600);
+    gnssSerial.println("AT");
+    delay(300);
+    resp = "";
+    while (gnssSerial.available()) resp += (char)gnssSerial.read();
+    resp.trim();
+    Serial.print("9600 响应: ");
+    Serial.println(resp.length() ? resp : "(无)");
+  }
 
   // 开启 GNSS
   gnssSerial.println("AT+CGNSPWR=1");
   delay(500);
+  while (gnssSerial.available()) gnssSerial.read(); // 清缓冲
   Serial.println("GNSS 定位已开启（首次冷启动约 30s）");
 }
 
@@ -1160,7 +1179,13 @@ void readGPS() {
   if (f < 3) return;
 
   gpsFix = fields[0].toInt();
-  if (gpsFix <= 0) { Serial.println("GPS 未定位"); return; }
+  if (gpsFix <= 0) {
+    if (millis() - lastGnssPublish < GNSS_INTERVAL + 5000) {
+      Serial.print("GPS 未定位 raw: ");
+      Serial.println(line);
+    }
+    return;
+  }
 
   gpsLng = fields[1].toFloat();  // 经度
   gpsLat = fields[2].toFloat();  // 纬度
