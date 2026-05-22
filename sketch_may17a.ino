@@ -16,14 +16,15 @@ const char* password = "999999999";
 #define DHT_PIN 4
 #define DHT_TYPE DHT11
 
-// Air780EX GNSS 定位（UART2: GPIO16=RX, GPIO17=TX）
-#define USE_GNSS
-#define GNSS_BAUD 115200
-HardwareSerial gnssSerial(2);
-const unsigned long GNSS_INTERVAL = 30000; // GPS 每 30 秒上报一次
-unsigned long lastGnssPublish = 0;
+// NEO-6M GPS 定位（UART2: GPIO16=RX, GPIO17=TX，波特率 9600）
+#define USE_GPS
+#define GPS_BAUD 9600
+#define GPS_RX 16
+#define GPS_TX 17
+HardwareSerial gpsSerial(2);
 float gpsLat = 0, gpsLng = 0, gpsAlt = 0, gpsSpd = 0;
 int gpsSat = 0, gpsFix = 0;
+const unsigned long GPS_INTERVAL = 30000; // 每 30 秒 MQTT 发布一次
 
 // LED 引脚
 const int LED_PIN = 2;
@@ -64,6 +65,10 @@ unsigned long lastWxAlert = 0;
 #include <ArduinoOTA.h>
 #ifdef USE_DHT
 #include <DHT.h>
+#endif
+#ifdef USE_GPS
+#include <TinyGPS++.h>
+TinyGPSPlus gps;
 #endif
 
 // ==================== 全局变量 ====================
@@ -1119,37 +1124,35 @@ void autoMode() {
 #ifdef USE_GNSS
 
 void initGNSS() {
-  gnssSerial.begin(GNSS_BAUD);
+  Serial.println("\n====== Air780EX 检测 ======");
+  // 用 GPIO5=RX, GPIO18=TX
+  gnssSerial.begin(115200, SERIAL_8N1, GNSS_RX, GNSS_TX);
   delay(500);
 
-  // 先试 115200，发 AT 看有没有响应
-  Serial.println("检测 Air780EX ...");
-  gnssSerial.println("AT");
-  delay(300);
-  String resp = "";
-  while (gnssSerial.available()) resp += (char)gnssSerial.read();
-  resp.trim();
-  Serial.print("115200 响应: ");
-  Serial.println(resp.length() ? resp : "(无)");
-
-  if (resp.indexOf("OK") < 0) {
-    // 切换到 9600 重试
-    Serial.println("切换到 9600 ...");
-    gnssSerial.updateBaudRate(9600);
-    gnssSerial.println("AT");
+  // 测试常用波特率
+  int bauds[] = {115200, 9600, 57600, 19200, 38400};
+  for (int i = 0; i < 5; i++) {
+    gnssSerial.updateBaudRate(bauds[i]);
+    delay(100);
+    Serial.printf("波特率 %d: AT ->", bauds[i]);
+    gnssSerial.print("AT\r\n");
     delay(300);
-    resp = "";
+    String resp = "";
     while (gnssSerial.available()) resp += (char)gnssSerial.read();
     resp.trim();
-    Serial.print("9600 响应: ");
-    Serial.println(resp.length() ? resp : "(无)");
+    if (resp.indexOf("OK") >= 0) {
+      Serial.println(" OK!");
+      gnssSerial.print("AT+CGNSPWR=1\r\n");
+      delay(500);
+      while (gnssSerial.available()) gnssSerial.read();
+      Serial.printf("GNSS 已开启 (波特率 %d)\n", bauds[i]);
+      Serial.println("=============================\n");
+      return;
+    }
+    Serial.println(resp.length() ? (" got:" + resp) : " 无");
   }
-
-  // 开启 GNSS
-  gnssSerial.println("AT+CGNSPWR=1");
-  delay(500);
-  while (gnssSerial.available()) gnssSerial.read(); // 清缓冲
-  Serial.println("GNSS 定位已开启（首次冷启动约 30s）");
+  Serial.println("❌ 所有波特率无响应！检查 GND/TX/RX/供电");
+  Serial.println("=============================\n");
 }
 
 void readGPS() {
@@ -1167,7 +1170,12 @@ void readGPS() {
 
   // 解析: +CGNSINF: mode,lng,lat,alt,spd,course,utc,sat,...
   int idx = line.indexOf("+CGNSINF:");
-  if (idx < 0) return;
+  if (idx < 0) {
+    Serial.print("GPS: Air780EX 无响应 raw=[");
+    Serial.print(line);
+    Serial.println("]");
+    return;
+  }
 
   String data = line.substring(idx + 10);
   // 取前 8 个逗号分隔字段
