@@ -1219,7 +1219,7 @@ void wifiLocate() {
       gpsLat = body.substring(li + 6, body.indexOf(",", li)).toFloat();
       gpsLng = body.substring(ni + 6, body.indexOf("}", ni)).toFloat();
       gpsFix = 1;
-      Serial.printf("WiFi定位: %.4f, %.4f\n", gpsLat, gpsLng);
+      Serial.printf("IP定位: %.4f, %.4f\n", gpsLat, gpsLng);
     }
   }
   http.end();
