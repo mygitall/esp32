@@ -13,18 +13,20 @@ const char* password = "999999999";
 // DHT11 温湿度传感器（需要 DHT sensor library）
 // 启用传感器（已开启）
 #define USE_DHT
-#define DHT_PIN 4
+#define DHT_PIN 14
 #define DHT_TYPE DHT11
 
-// NEO-6M GPS 定位（UART2: GPIO16=RX, GPIO17=TX，波特率 9600）
+// Air780EX GNSS 定位（UART2: GPIO4=RX, GPIO5=TX, 115200, PWRKEY=GPIO13）
 #define USE_GPS
-#define GPS_BAUD 9600
-#define GPS_RX 16
-#define GPS_TX 17
+#define GPS_BAUD 115200
+#define GPS_RX 4
+#define GPS_TX 5
+#define GPS_PWRKEY 13
 HardwareSerial gpsSerial(2);
 float gpsLat = 0, gpsLng = 0, gpsAlt = 0, gpsSpd = 0;
 int gpsSat = 0, gpsFix = 0;
-const unsigned long GPS_INTERVAL = 30000; // 每 30 秒 MQTT 发布一次
+const unsigned long GPS_INTERVAL = 30000; // 每 30 秒发布一次
+unsigned long lastGpsPublish = 0;
 
 // LED 引脚
 const int LED_PIN = 2;
@@ -67,8 +69,6 @@ unsigned long lastWxAlert = 0;
 #include <DHT.h>
 #endif
 #ifdef USE_GPS
-#include <TinyGPS++.h>
-TinyGPSPlus gps;
 #endif
 
 // ==================== 全局变量 ====================
@@ -1081,7 +1081,7 @@ void publishSensorData() {
   json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
   json += "\"uptime\":" + String(millis() / 1000) + ",";
   json += "\"ip\":\"" + WiFi.localIP().toString() + "\"";
-#ifdef USE_GNSS
+#ifdef USE_GPS
   json += ",\"lat\":" + String(gpsLat, 6) + ",\"lng\":" + String(gpsLng, 6);
   json += ",\"alt\":" + String(gpsAlt, 1) + ",\"spd\":" + String(gpsSpd, 1);
   json += ",\"sat\":" + String(gpsSat) + ",\"fix\":" + String(gpsFix);
@@ -1121,85 +1121,79 @@ void autoMode() {
 
 // ==================== Air780EX GNSS 定位 ====================
 
-#ifdef USE_GNSS
+#ifdef USE_GPS
 
-void initGNSS() {
-  Serial.println("\n====== Air780EX 检测 ======");
-  // 用 GPIO5=RX, GPIO18=TX
-  gnssSerial.begin(115200, SERIAL_8N1, GNSS_RX, GNSS_TX);
-  delay(500);
+void initGPS() {
+  Serial.println("\n====== Air780EX 开机 ======");
 
-  // 测试常用波特率
-  int bauds[] = {115200, 9600, 57600, 19200, 38400};
-  for (int i = 0; i < 5; i++) {
-    gnssSerial.updateBaudRate(bauds[i]);
-    delay(100);
-    Serial.printf("波特率 %d: AT ->", bauds[i]);
-    gnssSerial.print("AT\r\n");
-    delay(300);
+  // PWRKEY 拉低 2 秒开机，然后保持高电平
+  pinMode(GPS_PWRKEY, OUTPUT);
+  digitalWrite(GPS_PWRKEY, LOW);
+  delay(2000);
+  digitalWrite(GPS_PWRKEY, HIGH);
+  Serial.println("PWRKEY 已触发");
+
+  gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_RX, GPS_TX);
+  delay(2000);
+
+  // 发 AT 确认通信
+  for (int i = 0; i < 3; i++) {
+    gpsSerial.print("AT\r\n");
+    delay(500);
     String resp = "";
-    while (gnssSerial.available()) resp += (char)gnssSerial.read();
-    resp.trim();
+    while (gpsSerial.available()) resp += (char)gpsSerial.read();
     if (resp.indexOf("OK") >= 0) {
-      Serial.println(" OK!");
-      gnssSerial.print("AT+CGNSPWR=1\r\n");
-      delay(500);
-      while (gnssSerial.available()) gnssSerial.read();
-      Serial.printf("GNSS 已开启 (波特率 %d)\n", bauds[i]);
-      Serial.println("=============================\n");
-      return;
+      Serial.println("Air780EX AT 通信 OK");
+      break;
     }
-    Serial.println(resp.length() ? (" got:" + resp) : " 无");
+    if (i == 2) Serial.println("⚠ AT 无响应，检查接线/供电");
   }
-  Serial.println("❌ 所有波特率无响应！检查 GND/TX/RX/供电");
-  Serial.println("=============================\n");
+
+  // 开启 GNSS
+  gpsSerial.print("AT+CGNSPWR=1\r\n");
+  delay(500);
+  while (gpsSerial.available()) gpsSerial.read();
+  Serial.println("GNSS 已开启（首次定位约 30s）\n");
 }
 
 void readGPS() {
-  gnssSerial.println("AT+CGNSINF");
-  delay(200);
+  gpsSerial.print("AT+CGNSINF\r\n");
+  delay(300);
 
-  unsigned long timeout = millis() + 1000;
+  unsigned long t = millis() + 1000;
   String line = "";
-  while (millis() < timeout) {
-    if (gnssSerial.available()) {
-      char c = gnssSerial.read();
-      line += c;
-    }
+  while (millis() < t && gpsSerial.available()) {
+    line += (char)gpsSerial.read();
   }
 
-  // 解析: +CGNSINF: mode,lng,lat,alt,spd,course,utc,sat,...
   int idx = line.indexOf("+CGNSINF:");
   if (idx < 0) {
-    Serial.print("GPS: Air780EX 无响应 raw=[");
-    Serial.print(line);
+    Serial.print("GPS: 无响应 raw=[");
+    Serial.print(line.length() ? line : "(空)");
     Serial.println("]");
     return;
   }
 
+  // 解析: mode,lon,lat,alt,speed,course,utc,HDOP,VDOP,PDOP,...
   String data = line.substring(idx + 10);
-  // 取前 8 个逗号分隔字段
-  String fields[9];
+  String fields[10];
   int f = 0, last = 0;
-  for (int i = 0; i < data.length() && f < 9; i++) {
+  for (int i = 0; i < data.length() && f < 10; i++) {
     if (data[i] == ',') { fields[f++] = data.substring(last, i); last = i + 1; }
   }
   if (f < 3) return;
 
   gpsFix = fields[0].toInt();
   if (gpsFix <= 0) {
-    if (millis() - lastGnssPublish < GNSS_INTERVAL + 5000) {
-      Serial.print("GPS 未定位 raw: ");
-      Serial.println(line);
-    }
+    Serial.println("GPS: 未定位");
     return;
   }
 
-  gpsLng = fields[1].toFloat();  // 经度
-  gpsLat = fields[2].toFloat();  // 纬度
-  gpsAlt = fields[3].toFloat();  // 海拔(米)
-  gpsSpd = fields[4].toFloat();  // 速度(km/h)
-  gpsSat = fields[7].toInt();    // 卫星数
+  gpsLng = fields[1].toFloat();
+  gpsLat = fields[2].toFloat();
+  gpsAlt = fields[3].toFloat();
+  gpsSpd = fields[4].toFloat();
+  gpsSat = fields[7].toInt();
 
   Serial.printf("GPS: %.5f,%.5f alt=%.0fm spd=%.1f sat=%d\n",
     gpsLat, gpsLng, gpsAlt, gpsSpd, gpsSat);
@@ -1254,8 +1248,8 @@ void setup() {
   dht.begin();
 #endif
 
-#ifdef USE_GNSS
-  initGNSS();
+#ifdef USE_GPS
+  initGPS();
 #endif
 
   startTime = millis();
@@ -1309,10 +1303,10 @@ void loop() {
     publishSensorData();
   }
 
-#ifdef USE_GNSS
+#ifdef USE_GPS
   // GPS 定时读取 + 发布（30s）
-  if (millis() - lastGnssPublish >= GNSS_INTERVAL) {
-    lastGnssPublish = millis();
+  if (millis() - lastGpsPublish >= GPS_INTERVAL) {
+    lastGpsPublish = millis();
     readGPS();
     if (gpsFix > 0 && mqttClient.connected()) {
       char buf[100];
