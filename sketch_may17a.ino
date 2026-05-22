@@ -16,6 +16,15 @@ const char* password = "999999999";
 #define DHT_PIN 4
 #define DHT_TYPE DHT11
 
+// Air780EX GNSS 定位（UART2: GPIO16=RX, GPIO17=TX）
+#define USE_GNSS
+#define GNSS_BAUD 115200
+HardwareSerial gnssSerial(2);
+const unsigned long GNSS_INTERVAL = 30000; // GPS 每 30 秒上报一次
+unsigned long lastGnssPublish = 0;
+float gpsLat = 0, gpsLng = 0, gpsAlt = 0, gpsSpd = 0;
+int gpsSat = 0, gpsFix = 0;
+
 // LED 引脚
 const int LED_PIN = 2;
 
@@ -32,15 +41,17 @@ const char* mqtt_topic_hum = "esp32/hum";
 const char* mqtt_topic_status = "esp32/status";
 const char* mqtt_topic_led = "esp32/led";
 const char* mqtt_topic_cmd = "esp32/cmd";
+const char* mqtt_topic_gps  = "esp32/gps";
 const unsigned long MQTT_INTERVAL = 5000;  // 每 5 秒发布一次
 
 // HTTP POST 上报（存入 PHP 虚拟主机 MySQL）
 const char* HTTP_REPORT_URL = "https://www.sseeee.com/esp32/mmq/receiver.php";
+const char* CMD_POLL_URL = "https://www.sseeee.com/esp32/mmq/cmd_api.php?esp=1";
 
 // PushDeer 推送配置（一个 Key 推送到所有设备）
 const char* PUSHDEER_KEY = "PDU41451T5iKoPmpeiumcfCkvMOYBMnFsN2NGEG7z";
-const float WX_ALERT_TEMP = 30.0;     // 超过此温度触发微信推送
-const unsigned long WX_COOLDOWN = 600000;  // 10 分钟内不重复推送
+const float WX_ALERT_TEMP = 30.0;     // 超过此温度触发推送
+const unsigned long WX_COOLDOWN = 60000;  // 1 分钟内不重复
 unsigned long lastWxAlert = 0;
 
 // ==================== 引入库 ====================
@@ -995,6 +1006,24 @@ String urlEncode(String str) {
   return out;
 }
 
+// 轮询远程命令（小程序→PHP→ESP32）
+void pollCmd() {
+  HTTPClient http;
+  http.begin(CMD_POLL_URL);
+  int code = http.GET();
+  if (code == 200) {
+    String body = http.getString();
+    if (body.indexOf("\"led_on\"") >= 0) {
+      ledState = true; setLedBrightness(ledBrightness);
+      Serial.println("远程命令: LED 开");
+    } else if (body.indexOf("\"led_off\"") >= 0) {
+      ledState = false; setLedBrightness(0);
+      Serial.println("远程命令: LED 关");
+    }
+  }
+  http.end();
+}
+
 // PushDeer 推送
 void wxAlert(float temp, float hum) {
   unsigned long now = millis();
@@ -1047,6 +1076,11 @@ void publishSensorData() {
   json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
   json += "\"uptime\":" + String(millis() / 1000) + ",";
   json += "\"ip\":\"" + WiFi.localIP().toString() + "\"";
+#ifdef USE_GNSS
+  json += ",\"lat\":" + String(gpsLat, 6) + ",\"lng\":" + String(gpsLng, 6);
+  json += ",\"alt\":" + String(gpsAlt, 1) + ",\"spd\":" + String(gpsSpd, 1);
+  json += ",\"sat\":" + String(gpsSat) + ",\"fix\":" + String(gpsFix);
+#endif
   json += "}";
   mqttClient.publish(mqtt_topic_status, json.c_str());
 
@@ -1061,6 +1095,7 @@ void publishSensorData() {
 
   // HTTP POST 上报
   httpReport(json);
+  pollCmd();
 }
 
 // ==================== 自动模式（传感器联动） ====================
@@ -1078,6 +1113,66 @@ void autoMode() {
   }
 #endif
 }
+
+// ==================== Air780EX GNSS 定位 ====================
+
+#ifdef USE_GNSS
+
+void initGNSS() {
+  gnssSerial.begin(GNSS_BAUD);
+  delay(500);
+
+  // 检查模块响应
+  gnssSerial.println("AT");
+  delay(300);
+  while (gnssSerial.available()) gnssSerial.read(); // 清缓冲区
+
+  // 开启 GNSS
+  gnssSerial.println("AT+CGNSPWR=1");
+  delay(500);
+  Serial.println("GNSS 定位已开启（首次冷启动约 30s）");
+}
+
+void readGPS() {
+  gnssSerial.println("AT+CGNSINF");
+  delay(200);
+
+  unsigned long timeout = millis() + 1000;
+  String line = "";
+  while (millis() < timeout) {
+    if (gnssSerial.available()) {
+      char c = gnssSerial.read();
+      line += c;
+    }
+  }
+
+  // 解析: +CGNSINF: mode,lng,lat,alt,spd,course,utc,sat,...
+  int idx = line.indexOf("+CGNSINF:");
+  if (idx < 0) return;
+
+  String data = line.substring(idx + 10);
+  // 取前 8 个逗号分隔字段
+  String fields[9];
+  int f = 0, last = 0;
+  for (int i = 0; i < data.length() && f < 9; i++) {
+    if (data[i] == ',') { fields[f++] = data.substring(last, i); last = i + 1; }
+  }
+  if (f < 3) return;
+
+  gpsFix = fields[0].toInt();
+  if (gpsFix <= 0) { Serial.println("GPS 未定位"); return; }
+
+  gpsLng = fields[1].toFloat();  // 经度
+  gpsLat = fields[2].toFloat();  // 纬度
+  gpsAlt = fields[3].toFloat();  // 海拔(米)
+  gpsSpd = fields[4].toFloat();  // 速度(km/h)
+  gpsSat = fields[7].toInt();    // 卫星数
+
+  Serial.printf("GPS: %.5f,%.5f alt=%.0fm spd=%.1f sat=%d\n",
+    gpsLat, gpsLng, gpsAlt, gpsSpd, gpsSat);
+}
+
+#endif
 
 // ==================== OTA 无线升级 ====================
 
@@ -1126,6 +1221,10 @@ void setup() {
   dht.begin();
 #endif
 
+#ifdef USE_GNSS
+  initGNSS();
+#endif
+
   startTime = millis();
 
   // Wi-Fi 连接
@@ -1171,11 +1270,26 @@ void loop() {
   }
   mqttClient.loop();
 
-  // 定时发布传感器数据
+  // 定时发布传感器数据（5s）
   if (millis() - lastMqttPublish >= MQTT_INTERVAL) {
     lastMqttPublish = millis();
     publishSensorData();
   }
+
+#ifdef USE_GNSS
+  // GPS 定时读取 + 发布（30s）
+  if (millis() - lastGnssPublish >= GNSS_INTERVAL) {
+    lastGnssPublish = millis();
+    readGPS();
+    if (gpsFix > 0 && mqttClient.connected()) {
+      char buf[100];
+      snprintf(buf, sizeof(buf),
+        "{\"lat\":%.6f,\"lng\":%.6f,\"alt\":%.1f,\"spd\":%.1f,\"sat\":%d,\"fix\":%d}",
+        gpsLat, gpsLng, gpsAlt, gpsSpd, gpsSat, gpsFix);
+      mqttClient.publish(mqtt_topic_gps, buf);
+    }
+  }
+#endif
 
   if (currentMode == "auto") {
     autoMode();
