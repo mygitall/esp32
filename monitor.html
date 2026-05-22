@@ -10,6 +10,8 @@
 <title>ESP32 环境监控</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -110,6 +112,9 @@
 
   /* ---- Chart ---- */
   .chart-wrap { position: relative; height: 200px; overflow: hidden; }
+  .map-wrap { position: relative; height: 200px; border-radius: var(--radius-sm); overflow: hidden; margin-bottom: 4px; }
+  .map-wrap .leaflet-container { width: 100%; height: 100%; background: var(--surface); }
+  .gps-coords { font-size: 0.7rem; color: var(--text3); text-align: center; padding: 4px 0; }
   .chart-wrap canvas { width: 100% !important; height: 100% !important; }
   .crosshair {
     display: none; position: absolute; top: 0; bottom: 0;
@@ -252,6 +257,13 @@
     </div>
   </div>
 
+  <!-- GPS 定位 -->
+  <div class="section">
+    <div class="section-title">📍 设备位置</div>
+    <div class="map-wrap" id="mapWrap"><div id="leafMap"></div></div>
+    <div class="gps-coords" id="gpsCoords">等待 GPS 定位...</div>
+  </div>
+
   <!-- 历史曲线 -->
   <div class="section">
     <div class="section-title">
@@ -376,7 +388,7 @@
     client.options.reconnectPeriod = 3000;
     $('connDot').classList.add('live');
     $('connText').textContent = '已连接';
-    client.subscribe(['esp32/temp','esp32/hum','esp32/status','esp32/led']);
+    client.subscribe(['esp32/temp','esp32/hum','esp32/status','esp32/led','esp32/gps']);
   });
 
   client.on('reconnect', () => {
@@ -417,6 +429,37 @@
   function touchData() { lastDataTime = Date.now(); }
   let currentTemp = null, currentHum = null;
 
+  // ==================== Leaflet 地图 ====================
+  let leafMap, gpsMarker;
+
+  function initMap() {
+    leafMap = L.map('leafMap', {
+      center: [31.23, 121.47], zoom: 15,
+      attributionControl: false, zoomControl: false
+    });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19
+    }).addTo(leafMap);
+    // 修复默认 marker 图标
+    delete L.Icon.Default.prototype._getIconUrl;
+    L.Icon.Default.mergeOptions({
+      iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+      shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png'
+    });
+    gpsMarker = L.marker([31.23, 121.47]).addTo(leafMap);
+    // 初始化后再 resize 一次
+    setTimeout(() => leafMap.invalidateSize(), 500);
+  }
+
+  function updateMarker(lat, lng, alt, spd, sat) {
+    if (!leafMap || isNaN(lat) || isNaN(lng)) return;
+    gpsMarker.setLatLng([lat, lng]);
+    leafMap.setView([lat, lng], leafMap.getZoom());
+    $('gpsCoords').textContent =
+      '经度 ' + lng.toFixed(6) + '  纬度 ' + lat.toFixed(6) +
+      '  海拔 ' + (alt || 0).toFixed(1) + 'm  速度 ' + (spd || 0).toFixed(1) + 'km/h  卫星 ' + (sat || 0);
+  }
+
   client.on('message', (topic, payload) => {
     touchData();
     const msg = payload.toString();
@@ -444,6 +487,19 @@
         const d = JSON.parse(msg);
         ledOn = d.led === 'on';
         updateLedUI();
+      } catch(e) {}
+    } else if (topic === 'esp32/gps') {
+      try {
+        const d = JSON.parse(msg);
+        if (d.fix > 0) updateMarker(d.lat, d.lng, d.alt, d.spd, d.sat);
+      } catch(e) {}
+    }
+
+    // 从 status 中提取 GPS
+    if (topic === 'esp32/status') {
+      try {
+        const d = JSON.parse(msg);
+        if (d.lat && d.lng && d.fix > 0) updateMarker(d.lat, d.lng, d.alt, d.spd, d.sat);
       } catch(e) {}
     }
 
@@ -1003,6 +1059,7 @@
   setHistoryDate();
   requestNotify();
   initChart();
+  initMap();
   loadCache();              // 1. localStorage: 仪表读数（秒开）
   loadHistoryFromStorage(); // 2. localStorage: 压缩的历史曲线（秒开）
   preloadLatest();          // 3. PHP API: 最新读数
