@@ -221,9 +221,18 @@ const accuracyCircle=L.circle([31.23,121.47],{radius:100,color:'#4f8fff',weight:
 // 轨迹线 — 用已走过的 ROUTE 点画线，贴合真实路网
 let traveledIdx=0,traveledPath=[],totalMileage=0;
 
+// 全路线参考线（启动时画一次）
+let refLineShown=!1;
+function showRefRoute(){
+  if(refLineShown)return;refLineShown=!0;
+  const pts=ROUTE.map(p=>[p[0],p[1]]);
+  const line=L.polyline(pts,{color:'#00ff88',weight:2,opacity:.5,dashArray:'8,8'});
+  line._trackLine=!0;line.addTo(leafMap);
+}
+
 function drawTrack(){
-  // 两次尝试画轨迹：先试着用 Catmull-Rom 生成密集子点
   leafMap.eachLayer(l=>{if(l._trackLine)leafMap.removeLayer(l)});
+  showRefRoute();  // 绿虚线 = 完整 OSRM 路线
   if(traveledPath.length<2)return;
   try{
     // 在路网点之间用 Catmull-Rom 生成 ~20m 子点，polyline 直线段肉眼不可见
@@ -2770,7 +2779,7 @@ function toggleSim(){
   if(simRunning){
     $('connDot').classList.add('live');$('connText').textContent='模拟中';
     $('btnSim').textContent='⏹';
-    simHistory=[];traveledPath=[];traveledIdx=0;totalMileage=0;  // 清空
+    simHistory=[];traveledPath=[];traveledIdx=0;totalMileage=0;refLineShown=!1;  // 清空
     drawTrack();updateMileage();
     // 从上次位置最近的路段继续
     let bestDist=Infinity,bestSeg=0;
