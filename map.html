@@ -196,7 +196,13 @@ const leafMap = L.map('map', {
 // 双主题地图底图
 const darkTiles = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 });
 const lightTiles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 });
-darkTiles.addTo(leafMap);  // 默认深色
+darkTiles.addTo(leafMap);  // 临时占位
+// 默认浅色模式
+document.body.classList.add('light');
+leafMap.removeLayer(darkTiles);
+lightTiles.addTo(leafMap);
+$('themeBtn').textContent = '☀️';
+document.querySelector('meta[name="theme-color"]').content = '#f5f5f5';
 
 function toggleTheme() {
   const isLight = document.body.classList.toggle('light');
