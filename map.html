@@ -369,6 +369,7 @@ function toggleSim(){
   if(simRunning){
     $('connDot').classList.add('live');$('connText').textContent='模拟中';
     $('btnSim').textContent='⏹';
+    simHistory=[];  // 清空旧历史
     // 从上次位置最近的路段继续
     let bestDist=Infinity,bestSeg=0;
     (simForward?ROUTE:ROUTE_REV).forEach((p,i)=>{
@@ -419,9 +420,14 @@ function simStep(){
     alt:Number((3+Math.random()*8).toFixed(1)),
     spd:Number(spd.toFixed(1)),
     sat:8+Math.floor(Math.random()*10),
-    fix:1,acc:5+Math.floor(Math.random()*15)
+    fix:1,acc:5+Math.floor(Math.random()*15),
+    ts:new Date().toISOString().slice(11,19)
   };
   updateDisplay(fakeData);
+
+  // 存入本地模拟历史（供回放使用）
+  simHistory.push({...fakeData});
+  if(simHistory.length>5000)simHistory.shift();
 
   // 注入 MQTT 消息事件
   try{
@@ -429,6 +435,8 @@ function simStep(){
     if(h)h('esp32/gps',{toString:()=>JSON.stringify(fakeData)});
   }catch(e){}
 }
+
+let simHistory=[];
 
 // ============= PWA 安装 =============
 let deferredPrompt;
@@ -448,12 +456,18 @@ function togglePlayback(){
 function loadPlayback(){
   pbPause();pbIndex=-1;
   const date=$('pbDate').value||new Date().toISOString().slice(0,10);
-  // 从 PHP API 加载历史
+  const today=new Date().toISOString().slice(0,10);
+  // 今天优先用本地模拟历史，否则查 PHP API
+  if(date===today&&simHistory.length>0){
+    pbData=simHistory;
+    $('pbLabel').textContent=pbData.length+'条(本地) ';pbPlay();
+    return;
+  }
   fetch('https://www.sseeee.com/esp32/mmq/api.php?date='+date)
     .then(r=>r.json()).then(d=>{
       if(d.status==='ok'&&d.data.length>0){
         pbData=d.data.filter(p=>p.lat&&p.lng&&p.lat!==0);
-        $('pbLabel').textContent=pbData.length+'条 ';pbPlay();
+        $('pbLabel').textContent=pbData.length+'条(云端) ';pbPlay();
       }else{
         pbData=[];$('pbLabel').textContent='无数据';
       }
