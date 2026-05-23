@@ -2843,15 +2843,14 @@ function simStep(){
   // === 模拟拥堵随机停顿（1~2 次） ===
   if(simSpd<3&&Math.random()<.3)simSpd=0;
 
-  // 轨迹 = 已走过的 ROUTE 路网点（完全贴合道路）
+  // 轨迹 = 已走过的路网点 + 当前位置（样条精确值，无 GPS 抖动）
   while(simSegIdx>traveledIdx){
     const p=route[traveledIdx];
     traveledPath.push([p[0],p[1],p[2]]);
     traveledIdx++;
   }
-  // 最后加当前位置
-  traveledPath.push([dLat,dLng,simSpd]);
-  if(traveledPath.length>3000)traveledPath.shift();
+  traveledPath.push([simLat,simLng,simSpd]);
+  if(traveledPath.length>4000)traveledPath.shift();
   drawTrack();updateMileage();
 
   const fakeData={
