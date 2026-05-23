@@ -137,8 +137,9 @@
   <button onclick="pbPause()">⏸</button>
   <button onclick="pbStep(-5)">⏪</button>
   <button onclick="pbStep(5)">⏩</button>
+  <button onclick="pbStep(50)">⏭</button>
   <select id="pbSpeed" onchange="pbSpeed=parseFloat(this.value)">
-    <option value="1">1x</option><option value="2">2x</option><option value="5">5x</option><option value="10">10x</option>
+    <option value="1">1x</option><option value="2">2x</option><option value="5">5x</option><option value="10">10x</option><option value="20">20x</option><option value="50">50x</option>
   </select>
   <div class="prog" id="pbProg" onclick="pbSeek(event)"><div class="prog-fill" id="pbFill"></div></div>
   <span class="prog-label" id="pbLabel">--</span>
