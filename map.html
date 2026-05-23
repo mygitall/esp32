@@ -1560,7 +1560,7 @@ function toggleSim(){
     });
     simSegIdx=Math.min(bestSeg,(simForward?ROUTE:ROUTE_REV).length-2);
     simSegProgress=0;
-    simStep();simTimer=setInterval(simStep,1e3);
+    simStep();simTimer=setInterval(simStep,200);
   }else{
     clearInterval(simTimer);
     $('connText').textContent='手动停止';
@@ -1610,7 +1610,7 @@ function simStep(){
 
   // === 位置计算 ===
   const segLen=Math.hypot((lat1-lat0)*111320,(lng1-lng0)*111320*Math.cos((lat0+lat1)/2*Math.PI/180));
-  const step=Math.max(.0003,simSpd*10/3.6/segLen);
+  const step=Math.max(.0001,simSpd*10*.2/3.6/segLen);
   simSegProgress+=step;
 
   if(simSegProgress>=1){
