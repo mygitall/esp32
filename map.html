@@ -221,13 +221,53 @@ const accuracyCircle=L.circle([31.23,121.47],{radius:100,color:'#4f8fff',weight:
 // 轨迹线 — 用已走过的 ROUTE 点画线，贴合真实路网
 let traveledIdx=0,traveledPath=[],totalMileage=0;
 
+// Canvas 平滑轨迹 — Catmull-Rom 转贝塞尔画曲线，零直线段
+let trackCanvas,trackCtx;
+function initTrackCanvas(){
+  trackCanvas=document.createElement('canvas');
+  trackCanvas.style.cssText='position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:500';
+  $('map').appendChild(trackCanvas);
+  trackCtx=trackCanvas.getContext('2d');
+}
+function resizeTrackCanvas(){
+  if(!trackCanvas)return;
+  const s=leafMap.getSize();trackCanvas.width=s.x;trackCanvas.height=s.y;
+}
+
+function catmullRom2bezier(p0, p1, p2, p3) {
+  // 将 Catmull-Rom 段转为两个贝塞尔控制点
+  const c1x = p1[0] + (p2[0]-p0[0])/6, c1y = p1[1] + (p2[1]-p0[1])/6;
+  const c2x = p2[0] - (p3[0]-p1[0])/6, c2y = p2[1] - (p3[1]-p1[1])/6;
+  return [c1x,c1y,c2x,c2y];
+}
+
 function drawTrack(){
-  leafMap.eachLayer(l=>{if(l._trackLine)leafMap.removeLayer(l)});
-  if(traveledPath.length>1){
-    const pts=traveledPath.map(p=>[p[0],p[1]]);
-    const line=L.polyline(pts,{color:'#4f8fff',weight:3,opacity:.7});
-    line._trackLine=!0;line.addTo(leafMap);
+  if(!trackCanvas)initTrackCanvas();
+  resizeTrackCanvas();
+  if(!trackCtx)return;
+  trackCtx.clearRect(0,0,trackCanvas.width,trackCanvas.height);
+  if(traveledPath.length<2)return;
+
+  // 构建 Catmull-Rom → Bezier SVG 路径
+  const n=traveledPath.length;
+  let d='';
+  for(let i=0;i<n-1;i++){
+    const p0=traveledPath[Math.max(0,i-1)],p1=traveledPath[i],
+          p2=traveledPath[i+1],p3=traveledPath[Math.min(n-1,i+2)];
+    const p1px=leafMap.latLngToContainerPoint([p1[0],p1[1]]);
+    const p2px=leafMap.latLngToContainerPoint([p2[0],p2[1]]);
+    const ctrls=catmullRom2bezier(
+      leafMap.latLngToContainerPoint([p0[0],p0[1]]),
+      p1px,p2px,
+      leafMap.latLngToContainerPoint([p3[0],p3[1]])
+    );
+    d+=`M${p1px.x} ${p1px.y} C${ctrls[0]} ${ctrls[1]} ${ctrls[2]} ${ctrls[3]} ${p2px.x} ${p2px.y}`;
   }
+
+  const path=new Path2D(d);
+  trackCtx.strokeStyle='#4f8fff';trackCtx.lineWidth=4;trackCtx.lineCap='round';trackCtx.lineJoin='round';
+  trackCtx.globalAlpha=.75;
+  trackCtx.stroke(path);
 }
 
 function updateMileage(){
@@ -3017,7 +3057,9 @@ function updateDisplay(d){
 
 // ============= 启动 =============
 setTimeout(()=>leafMap.invalidateSize(),300);
-window.addEventListener('resize',()=>leafMap.invalidateSize());
+window.addEventListener('resize',()=>{leafMap.invalidateSize();drawTrack()});
+leafMap.on('move',drawTrack);
+leafMap.on('zoom',drawTrack);
 document.addEventListener('gesturestart',e=>e.preventDefault(),{passive:!1});
 document.addEventListener('gesturechange',e=>e.preventDefault(),{passive:!1});
 document.addEventListener('gestureend',e=>e.preventDefault(),{passive:!1});
