@@ -124,6 +124,19 @@
   }
   .theme-btn:active { background: rgba(79,143,255,0.2); }
 
+  /* 地址 tooltip */
+  .addr-tooltip {
+    background: rgba(0,0,0,0.78) !important;
+    border: 1px solid rgba(255,255,255,0.2) !important;
+    border-radius: 8px !important;
+    color: #fff !important;
+    font-size: 0.8rem !important;
+    padding: 6px 12px !important;
+    white-space: nowrap;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  }
+  .addr-tooltip::before { border-top-color: rgba(0,0,0,0.78) !important; }
+
   /* 响应式 */
   @media (min-width: 768px) {
     .infobar { left: 50%; right: auto; transform: translateX(-50%); min-width: 500px; }
@@ -240,13 +253,42 @@ const carIcon = L.divIcon({
   className: ''
 });
 
-const gpsMarker = L.marker([31.23, 121.47], { icon: carIcon }).addTo(leafMap);
+const gpsMarker = L.marker([31.23, 121.47], { icon: carIcon })
+  .addTo(leafMap)
+  .bindTooltip('定位中...', { direction: 'top', offset: [0, -20], className: 'addr-tooltip' });
 
 // 精度圈
 const accuracyCircle = L.circle([31.23, 121.47], {
   radius: 100, color: '#4f8fff', weight: 1,
   opacity: 0.5, fillOpacity: 0.1
 }).addTo(leafMap);
+
+// 逆地理编码（高德 API，坐标 → 地址）
+const AMAP_KEY = '971a6c461c7c46e28b04ff621ac62a61';
+let lastGeoLat = 0, lastGeoLng = 0;
+
+function reverseGeocode(lat, lng) {
+  // 坐标变化超过 ~50m 才重新查地址
+  if (Math.abs(lat - lastGeoLat) < 0.0005 && Math.abs(lng - lastGeoLng) < 0.0005) return;
+  lastGeoLat = lat; lastGeoLng = lng;
+
+  fetch(`https://restapi.amap.com/v3/geocode/regeo?key=${AMAP_KEY}&location=${lng},${lat}&extensions=base&output=json`)
+    .then(r => r.json())
+    .then(d => {
+      if (d.status === '1' && d.regeocode) {
+        const addr = d.regeocode.formatted_address || '';
+        const comp = d.regeocode.addressComponent || {};
+        // 格式化：静安区 · 黄陂南路99号
+        const district = comp.district ? comp.district + ' · ' : '';
+        const street = (comp.streetNumber || {}).street || '';
+        const number = (comp.streetNumber || {}).number || '';
+        const road = street + (number || '附近');
+        const label = (district + road).trim() || addr;
+        gpsMarker.setTooltipContent(label);
+      }
+    })
+    .catch(() => {});
+}
 
 // 轨迹线
 let trackLine = L.polyline([], {
@@ -278,6 +320,9 @@ client.on('message', (topic, payload) => {
 
 function updateDisplay(d) {
   const lat = Number(d.lat), lng = Number(d.lng);
+
+  // 逆地理查询地址
+  reverseGeocode(lat, lng);
 
   // 移动标记
   gpsMarker.setLatLng([lat, lng]);
