@@ -10,152 +10,99 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<link rel="manifest" href="data:application/json,{}" />
 <style>
-  * { margin:0; padding:0; box-sizing:border-box; }
+  *{margin:0;padding:0;box-sizing:border-box}
 
-  :root {
-    --bg:#0b0e14; --surface:#141820; --surface2:#1a1f2b;
-    --border:#252a35; --text:#e2e4e9; --text2:#8b8f9a; --text3:#5a5e6a;
-    --green:#00d4aa; --red:#ff4757; --accent:#4f8fff;
-    --panel-bg:rgba(20,24,32,0.92);
-    --btn-bg:rgba(20,24,32,0.9);
-    --title-from:#e2e4e9; --title-to:#8b8f9a;
+  :root{
+    --bg:#0b0e14;--surface:#141820;--surface2:#1a1f2b;
+    --border:#252a35;--text:#e2e4e9;--text2:#8b8f9a;--text3:#5a5e6a;
+    --green:#00d4aa;--red:#ff4757;--accent:#4f8fff;
+    --panel-bg:rgba(20,24,32,0.9);--btn-bg:rgba(20,24,32,0.9);
+    --title-from:#e2e4e9;--title-to:#8b8f9a;
   }
+  body.light{
+    --bg:#f5f5f5;--surface:#fff;--surface2:#f0f0f0;
+    --border:#ddd;--text:#333;--text2:#666;--text3:#999;
+    --panel-bg:rgba(255,255,255,0.9);--btn-bg:rgba(255,255,255,0.9);
+    --title-from:#333;--title-to:#666;
+  }
+  body{font-family:-apple-system,'SF Pro Display',sans-serif;background:var(--bg);color:var(--text);height:100vh;overflow:hidden;touch-action:manipulation;-webkit-text-size-adjust:100%}
 
-  body.light {
-    --bg:#f5f5f5; --surface:#fff; --surface2:#f0f0f0;
-    --border:#ddd; --text:#333; --text2:#666; --text3:#999;
-    --panel-bg:rgba(255,255,255,0.92);
-    --btn-bg:rgba(255,255,255,0.9);
-    --title-from:#333; --title-to:#666;
-  }
+  #map{width:100%;height:100%;background:var(--surface)}
 
-  body {
-    font-family: -apple-system, 'SF Pro Display', 'Segoe UI', sans-serif;
-    background: var(--bg); color: var(--text);
-    height: 100vh; overflow: hidden;
-    touch-action: manipulation; -webkit-text-size-adjust: 100%;
-  }
+  /* 顶部 */
+  .topbar{position:absolute;top:0;left:0;right:0;z-index:1000;display:flex;align-items:center;justify-content:space-between;padding:12px 16px;pointer-events:none}
+  .topbar>*{pointer-events:auto}
+  .title{font-size:2.2rem;font-weight:700;color:#f00}
+  .conn-badge{display:flex;align-items:center;gap:8px;background:var(--panel-bg);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:100px;padding:6px 14px;font-size:.7rem;color:var(--text2)}
+  .conn-dot{width:8px;height:8px;border-radius:50%;background:var(--red);transition:background .4s}
+  .conn-dot.live{background:var(--green);box-shadow:0 0 8px rgba(0,212,170,.4)}
 
-  /* 全屏地图 */
-  #map {
-    width: 100%; height: 100%;
-    background: var(--surface);
+  /* 底部面板 — 可上滑 */
+  .infobar{
+    position:absolute;bottom:20px;left:16px;right:16px;z-index:1000;
+    background:var(--panel-bg);backdrop-filter:blur(12px);
+    border:1px solid var(--border);border-radius:16px;
+    padding:14px 18px;max-height:80px;overflow:hidden;
+    transition:max-height .3s,bottom .3s;pointer-events:auto;
   }
+  .infobar.expanded{max-height:420px;bottom:10px}
+  .infobar-header{display:flex;justify-content:space-between;align-items:center;cursor:pointer}
+  .info-coords{font-size:.85rem;color:var(--text);font-weight:600;font-variant-numeric:tabular-nums}
+  .info-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;margin-top:10px}
+  .info-item{font-size:.8rem;color:var(--text2)}
+  .info-item span{color:var(--text);font-weight:600}
+  .info-expand{display:none}
+  .infobar.expanded .info-expand{display:block}
+  .expand-icon{font-size:.7rem;color:var(--text3);transition:transform .3s}
+  .infobar.expanded .expand-icon{transform:rotate(180deg)}
+  /* 里程 */
+  .mileage{font-size:.8rem;color:var(--accent);margin-top:8px;display:none}
+  .infobar.expanded .mileage{display:block}
 
-  /* 顶部状态栏 */
-  .topbar {
-    position: absolute; top:0; left:0; right:0; z-index: 1000;
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 12px 16px;
-    pointer-events: none;
+  /* 右侧按钮组 */
+  .right-btns{position:absolute;right:16px;top:50%;transform:translateY(-50%);z-index:1000;display:flex;flex-direction:column;gap:6px}
+  .rbtn{
+    width:40px;height:40px;border-radius:12px;border:1px solid var(--border);
+    background:var(--btn-bg);backdrop-filter:blur(10px);color:var(--text);
+    font-size:1.1rem;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;
   }
-  .topbar > * { pointer-events: auto; }
+  .rbtn:active{background:rgba(79,143,255,.2)}
+  .rbtn.on{background:rgba(79,143,255,.3);border-color:var(--accent);color:var(--accent)}
 
-  .title {
-    font-size: 2.2rem; font-weight: 700; letter-spacing: -0.3px;
-    color: #ff0000;
+  @media(max-width:767px){
+    .rbtn{width:80px;height:80px;font-size:2rem;border-radius:18px}
+    .right-btns{gap:8px;margin-top:60px}
+    .title{font-size:1.6rem}
+    .infobar{max-height:80px}.infobar.expanded{max-height:500px}
   }
-
-  .conn-badge {
-    display: flex; align-items: center; gap: 8px;
-    background: var(--panel-bg); backdrop-filter: blur(10px);
-    border: 1px solid var(--border);
-    border-radius: 100px; padding: 6px 14px;
-    font-size: 0.7rem; color: var(--text2);
-  }
-  .conn-dot {
-    width: 8px; height: 8px; border-radius: 50%;
-    background: var(--red); transition: background 0.4s;
-  }
-  .conn-dot.live { background: var(--green); box-shadow: 0 0 8px rgba(0,212,170,0.4); }
-
-  /* 底部信息栏 */
-  .infobar {
-    position: absolute; bottom: 20px; left: 16px; right: 16px; z-index: 1000;
-    background: var(--panel-bg); backdrop-filter: blur(12px);
-    border: 1px solid var(--border); border-radius: 16px;
-    padding: 14px 18px;
-    display: grid; grid-template-columns: 1fr 1fr;
-    gap: 6px 16px;
-    pointer-events: none;
-  }
-  .info-item { font-size: 0.8rem; color: var(--text2); }
-  .info-item span { color: var(--text); font-weight: 600; }
-  .info-coords {
-    grid-column: 1 / -1;
-    font-size: 0.85rem; color: var(--text);
-    font-weight: 600; font-variant-numeric: tabular-nums;
+  @media(min-width:768px){
+    .infobar{left:50%;right:auto;transform:translateX(-50%);min-width:480px}
+    .infobar.expanded{transform:translateX(-50%)}
+    .title{font-size:2.6rem}
+    .topbar{padding:16px 24px}
   }
 
-  /* 缩放按钮 */
-  .zoom-ctrl {
-    position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
-    z-index: 1000; display: flex; flex-direction: column; gap: 6px;
-  }
-  .zoom-ctrl button {
-    width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--border);
-    background: var(--btn-bg); backdrop-filter: blur(10px);
-    color: var(--text); font-size: 1.3rem; cursor: pointer;
-    transition: background 0.2s;
-  }
-  .zoom-ctrl button:active { background: rgba(79,143,255,0.2); }
+  /* tooltip */
+  .addr-tooltip{background:rgba(0,0,0,.78)!important;border:1px solid rgba(255,255,255,.2)!important;border-radius:8px!important;color:#fff!important;font-size:.8rem!important;padding:6px 12px!important;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,.3)}
+  .addr-tooltip::before{border-top-color:rgba(0,0,0,.78)!important}
 
-  /* 定位按钮 */
-  .locate-btn {
-    position: absolute; right: 16px; bottom: 140px; z-index: 1000;
-    width: 40px; height: 40px; border-radius: 12px;
-    border: 1px solid var(--border);
-    background: var(--btn-bg); backdrop-filter: blur(10px);
-    color: var(--text); font-size: 1.2rem; cursor: pointer;
-    transition: background 0.2s;
-  }
-  .locate-btn:active { background: rgba(79,143,255,0.2); }
+  /* 回放控制栏 */
+  .playback{position:absolute;top:70px;left:50%;transform:translateX(-50%);z-index:1000;background:var(--panel-bg);backdrop-filter:blur(12px);border:1px solid var(--border);border-radius:16px;padding:12px 16px;display:none;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center}
+  .playback.show{display:flex}
+  .playback input[type=date]{padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.75rem}
+  .playback button{width:36px;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--btn-bg);color:var(--text);cursor:pointer;font-size:1rem}
+  .playback button:active{background:rgba(79,143,255,.2)}
+  .playback select{padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.75rem}
+  .playback .prog{flex:1;min-width:100px;height:4px;border-radius:2px;background:var(--border);cursor:pointer;position:relative}
+  .playback .prog-fill{height:100%;border-radius:2px;background:var(--accent);width:0%}
+  .playback .prog-label{font-size:.65rem;color:var(--text3);white-space:nowrap}
 
-  /* 主题切换按钮 */
-  .theme-btn {
-    position: absolute; right: 16px; bottom: 190px; z-index: 1000;
-    width: 40px; height: 40px; border-radius: 12px;
-    border: 1px solid var(--border);
-    background: var(--btn-bg); backdrop-filter: blur(10px);
-    color: var(--text); font-size: 1.2rem; cursor: pointer;
-    transition: background 0.2s;
-  }
-  .theme-btn:active { background: rgba(79,143,255,0.2); }
-
-  /* 地址 tooltip */
-  .addr-tooltip {
-    background: rgba(0,0,0,0.78) !important;
-    border: 1px solid rgba(255,255,255,0.2) !important;
-    border-radius: 8px !important;
-    color: #fff !important;
-    font-size: 0.8rem !important;
-    padding: 6px 12px !important;
-    white-space: nowrap;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-  }
-  .addr-tooltip::before { border-top-color: rgba(0,0,0,0.78) !important; }
-
-  /* 移动端放大底部按钮 */
-  @media (max-width: 767px) {
-    .locate-btn {
-      width: 80px; height: 80px; font-size: 2rem;
-      border-radius: 18px;
-      bottom: 200px;
-    }
-    .theme-btn {
-      width: 80px; height: 80px; font-size: 2rem;
-      border-radius: 18px;
-      bottom: 295px;
-    }
-  }
-
-  /* 响应式 */
-  @media (min-width: 768px) {
-    .infobar { left: 50%; right: auto; transform: translateX(-50%); min-width: 500px; }
-    .title { font-size: 2.6rem; }
-    .topbar { padding: 16px 24px; }
-  }
+  /* 分享 toast */
+  .share-toast{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--panel-bg);border:1px solid var(--border);border-radius:12px;padding:12px 20px;font-size:.85rem;color:var(--text);z-index:9999;display:none;box-shadow:0 8px 32px rgba(0,0,0,.5)}
+  .share-toast.show{display:block;animation:fadeOut 2s forwards}
+  @keyframes fadeOut{0%,60%{opacity:1}100%{opacity:0}}
 </style>
 </head>
 <body>
@@ -170,203 +117,334 @@
   </div>
 </div>
 
-<div class="zoom-ctrl">
-  <button onclick="zoomIn()" title="放大">+</button>
-  <button onclick="zoomOut()" title="缩小">−</button>
+<!-- 右侧按钮组 -->
+<div class="right-btns" id="rightBtns">
+  <button class="rbtn" onclick="zoomIn()" title="放大">+</button>
+  <button class="rbtn" onclick="zoomOut()" title="缩小">−</button>
+  <button class="rbtn" id="btnFollow" onclick="toggleFollow()" title="跟随模式">🎯</button>
+  <button class="rbtn" onclick="centerOnMarker()" title="定位设备">📍</button>
+  <button class="rbtn" onclick="toggleTheme()" title="深/浅色" id="themeBtn">🌙</button>
+  <button class="rbtn" id="btnPlayback" onclick="togglePlayback()" title="历史回放">⏮</button>
+  <button class="rbtn" onclick="shareLoc()" title="分享位置">🔗</button>
+  <button class="rbtn" id="btnInstall" onclick="installPWA()" title="添加到桌面" style="display:none">📲</button>
 </div>
 
-<button class="locate-btn" onclick="centerOnMarker()" title="定位设备">📍</button>
-<button class="theme-btn" onclick="toggleTheme()" title="切换深/浅色" id="themeBtn">🌙</button>
+<!-- 回放控制栏 -->
+<div class="playback" id="playback">
+  <input type="date" id="pbDate" onchange="loadPlayback()">
+  <button onclick="pbPlay()" id="pbPlayBtn">▶</button>
+  <button onclick="pbPause()">⏸</button>
+  <button onclick="pbStep(-5)">⏪</button>
+  <button onclick="pbStep(5)">⏩</button>
+  <select id="pbSpeed" onchange="pbSpeed=parseFloat(this.value)">
+    <option value="1">1x</option><option value="2">2x</option><option value="5">5x</option><option value="10">10x</option>
+  </select>
+  <div class="prog" id="pbProg" onclick="pbSeek(event)"><div class="prog-fill" id="pbFill"></div></div>
+  <span class="prog-label" id="pbLabel">--</span>
+</div>
 
+<!-- 底部面板 -->
 <div class="infobar" id="infobar">
-  <div class="info-coords" id="coords">等待 GPS 数据...</div>
-  <div class="info-item">📡 卫星 <span id="sat">--</span></div>
-  <div class="info-item">⚡ 海拔 <span id="alt">--</span>m</div>
-  <div class="info-item">🏃 速度 <span id="spd">--</span>km/h</div>
-  <div class="info-item">🕐 更新 <span id="ts">--</span></div>
+  <div class="infobar-header" onclick="togglePanel()">
+    <div class="info-coords" id="coords">等待 GPS 数据...</div>
+    <span class="expand-icon">▲</span>
+  </div>
+  <div class="info-grid">
+    <div class="info-item">📡 卫星 <span id="sat">--</span></div>
+    <div class="info-item">⚡ 海拔 <span id="alt">--</span>m</div>
+    <div class="info-item">🏃 速度 <span id="spd">--</span>km/h</div>
+    <div class="info-item">🕐 更新 <span id="ts">--</span></div>
+  </div>
+  <div class="info-expand">
+    <div class="mileage" id="mileage">📏 今日里程: 0.00 km</div>
+    <div class="info-item" style="margin-top:6px">📍 精度 ±<span id="acc">--</span>m</div>
+    <div class="info-item">🔔 围栏 <span id="fence">--</span></div>
+  </div>
 </div>
+
+<div class="share-toast" id="shareToast"></div>
 
 <script>
-const $ = id => document.getElementById(id);
+const $=id=>document.getElementById(id);
 
-// ========== MQTT ==========
-const broker = 'wss://broker.emqx.io:8084/mqtt';
-const client = mqtt.connect(broker, {
-  clientId: 'map_' + Math.random().toString(16).slice(2, 10),
-  clean: true, connectTimeout: 10000, reconnectPeriod: 3000
+// ============= MQTT =============
+const broker='wss://broker.emqx.io:8084/mqtt';
+const client=mqtt.connect(broker,{
+  clientId:'map_'+Math.random().toString(16).slice(2,10),
+  clean:!0,connectTimeout:1e4,reconnectPeriod:3e3
 });
-
-client.on('connect', () => {
-  $('connDot').classList.add('live');
-  $('connText').textContent = '已连接';
+let mqttConnected=!1,lastDataTime=0,lastUpdate=0;
+client.on('connect',()=>{
+  mqttConnected=!0;
+  $('connDot').classList.add('live');$('connText').textContent='已连接';
   client.subscribe('esp32/gps');
+  updateRelativeTime();
 });
+client.on('reconnect',()=>{
+  mqttConnected=!1;
+  $('connDot').classList.remove('live');$('connText').textContent='重连中';
+});
+client.on('offline',()=>{
+  mqttConnected=!1;
+  $('connDot').classList.remove('live');$('connText').textContent='已断开';
+});
+setInterval(updateRelativeTime,1e4);
 
-client.on('reconnect', () => {
-  $('connDot').classList.remove('live');
-  $('connText').textContent = '重连中';
-});
+// ============= Leaflet 地图 =============
+const leafMap=L.map('map',{center:[31.23,121.47],zoom:15,attributionControl:!1,zoomControl:!1});
 
-client.on('offline', () => {
-  $('connDot').classList.remove('live');
-  $('connText').textContent = '已断开';
-});
+// 高德底图
+const darkTiles=L.tileLayer('https://wprd0{s}.is.autonavi.com/appmaptile?x={x}&y={y}&z={z}&lang=zh_cn&size=1&scl=1&style=8',{subdomains:'1234',maxZoom:18});
+const lightTiles=L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',{subdomains:'1234',maxZoom:18});
+darkTiles.addTo(leafMap);
+// 默认浅色
+document.body.classList.add('light');leafMap.removeLayer(darkTiles);lightTiles.addTo(leafMap);
+$('themeBtn').textContent='☀️';
+document.querySelector('meta[name="theme-color"]').content='#f5f5f5';
 
-// ========== Leaflet 地图 ==========
-const leafMap = L.map('map', {
-  center: [31.23, 121.47], zoom: 15,
-  attributionControl: false,
-  zoomControl: false
-});
-
-// 高德地图底图（国内免 VPN，免费）
-const darkTiles = L.tileLayer('https://wprd0{s}.is.autonavi.com/appmaptile?x={x}&y={y}&z={z}&lang=zh_cn&size=1&scl=1&style=8', {
-  subdomains: '1234', maxZoom: 18
-});
-const lightTiles = L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
-  subdomains: '1234', maxZoom: 18
-});
-darkTiles.addTo(leafMap);  // 临时占位
-// 默认浅色模式
-document.body.classList.add('light');
-leafMap.removeLayer(darkTiles);
-lightTiles.addTo(leafMap);
-$('themeBtn').textContent = '☀️';
-document.querySelector('meta[name="theme-color"]').content = '#f5f5f5';
-
-function toggleTheme() {
-  const isLight = document.body.classList.toggle('light');
-  if (isLight) {
-    leafMap.removeLayer(darkTiles);
-    lightTiles.addTo(leafMap);
-    $('themeBtn').textContent = '☀️';
-    document.querySelector('meta[name="theme-color"]').content = '#f5f5f5';
-    localStorage.setItem('map_theme', 'light');
-  } else {
-    leafMap.removeLayer(lightTiles);
-    darkTiles.addTo(leafMap);
-    $('themeBtn').textContent = '🌙';
-    document.querySelector('meta[name="theme-color"]').content = '#0b0e14';
-    localStorage.setItem('map_theme', 'dark');
-  }
+function toggleTheme(){
+  const isLight=document.body.classList.toggle('light');
+  if(isLight){leafMap.removeLayer(darkTiles);lightTiles.addTo(leafMap);$('themeBtn').textContent='☀️';document.querySelector('meta[name="theme-color"]').content='#f5f5f5';localStorage.setItem('map_theme','light')}
+  else{leafMap.removeLayer(lightTiles);darkTiles.addTo(leafMap);$('themeBtn').textContent='🌙';document.querySelector('meta[name="theme-color"]').content='#0b0e14';localStorage.setItem('map_theme','dark')}
 }
+(localStorage.getItem('map_theme')==='light')&&(document.body.classList.add('light'),leafMap.removeLayer(darkTiles),lightTiles.addTo(leafMap),$('themeBtn').textContent='☀️');
 
-// 恢复主题偏好
-(function() {
-  if (localStorage.getItem('map_theme') === 'light') {
-    document.body.classList.add('light');
-    leafMap.removeLayer(darkTiles);
-    lightTiles.addTo(leafMap);
-    $('themeBtn').textContent = '☀️';
-    document.querySelector('meta[name="theme-color"]').content = '#f5f5f5';
-  }
-})();
-
-// 小车图标（SVG）
-const carIcon = L.divIcon({
-  html: '<div style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;font-size:28px;filter:drop-shadow(2px 2px 3px rgba(0,0,0,0.5));">🚗</div>',
-  iconSize: [36, 36],
-  iconAnchor: [18, 18],
-  className: ''
-});
-
-const gpsMarker = L.marker([31.23, 121.47], { icon: carIcon })
-  .addTo(leafMap)
-  .bindTooltip('定位中...', { direction: 'top', offset: [0, -20], className: 'addr-tooltip' });
+// 小车标记
+const carIcon=L.divIcon({html:'<div style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;font-size:28px;filter:drop-shadow(2px 2px 3px rgba(0,0,0,.5))">🚗</div>',iconSize:[36,36],iconAnchor:[18,18],className:''});
+const gpsMarker=L.marker([31.23,121.47],{icon:carIcon}).addTo(leafMap).bindTooltip('定位中...',{direction:'top',offset:[0,-20],className:'addr-tooltip'});
 
 // 精度圈
-const accuracyCircle = L.circle([31.23, 121.47], {
-  radius: 100, color: '#4f8fff', weight: 1,
-  opacity: 0.5, fillOpacity: 0.1
-}).addTo(leafMap);
+const accuracyCircle=L.circle([31.23,121.47],{radius:100,color:'#4f8fff',weight:1,opacity:.5,fillOpacity:.1}).addTo(leafMap);
 
-// 逆地理编码（高德 API，坐标 → 地址）
-const AMAP_KEY = '971a6c461c7c46e28b04ff621ac62a61';
-let lastGeoLat = 0, lastGeoLng = 0;
+// 轨迹线（支持热力色）
+let trackPoints=[],trackSegments=[],gpsHistory=[],lastLat=null,lastLng=null;
 
-function reverseGeocode(lat, lng) {
-  // 坐标变化超过 ~50m 才重新查地址
-  if (Math.abs(lat - lastGeoLat) < 0.0005 && Math.abs(lng - lastGeoLng) < 0.0005) return;
-  lastGeoLat = lat; lastGeoLng = lng;
+function addTrackPoint(lat,lng,spd){
+  trackPoints.push([lat,lng]);
+  if(trackPoints.length>500)trackPoints.shift();
+  // 颜色按速度着色
+  const speed=spd||0,c=speed>40?'#ff4757':speed>20?'#ffba3b':speed>5?'#4f8fff':'#00d4aa';
+  if(lastLat!==null){
+    trackSegments.push({coords:[[lastLat,lastLng],[lat,lng]],color:c});
+    if(trackSegments.length>500)trackSegments.shift();
+  }
+  lastLat=lat;lastLng=lng;
 
-  fetch(`https://restapi.amap.com/v3/geocode/regeo?key=${AMAP_KEY}&location=${lng},${lat}&extensions=base&output=json`)
-    .then(r => r.json())
-    .then(d => {
-      if (d.status === '1' && d.regeocode) {
-        const addr = d.regeocode.formatted_address || '';
-        const comp = d.regeocode.addressComponent || {};
-        // 格式化：静安区 · 黄陂南路99号
-        const district = comp.district ? comp.district + ' · ' : '';
-        const street = (comp.streetNumber || {}).street || '';
-        const number = (comp.streetNumber || {}).number || '';
-        const road = street + (number || '附近');
-        const label = (district + road).trim() || addr;
-        gpsMarker.setTooltipContent(label);
+  // 重绘轨迹线
+  drawTrack();
+}
+
+function drawTrack(){
+  // 移除旧线
+  leafMap.eachLayer(l=>{if(l._trackLine)leafMap.removeLayer(l)});
+  // 简单折线（省性能）
+  if(trackPoints.length>1){
+    const line=L.polyline(trackPoints,{color:'#4f8fff',weight:3,opacity:.6});
+    line._trackLine=!0;line.addTo(leafMap);
+  }
+  // 里程
+  updateMileage();
+}
+
+let totalMileage=0;
+function updateMileage(){
+  if(trackPoints.length<2)return;
+  let d=0;
+  for(let i=1;i<trackPoints.length;i++){
+    const lat1=trackPoints[i-1][0],lng1=trackPoints[i-1][1],
+          lat2=trackPoints[i][0],lng2=trackPoints[i][1];
+    const r=.0089932; // 0.01deg ≈ 1.11km at lat 30
+    d+=Math.sqrt(Math.pow((lat2-lat1)*111.32,2)+Math.pow((lng2-lng1)*111.32*Math.cos(lat1*Math.PI/180),2));
+  }
+  totalMileage+=d*.1; // 累积
+  $('mileage').textContent='📏 今日里程: '+totalMileage.toFixed(2)+' km';
+}
+
+// ============= 逆地理编码 =============
+const AMAP_KEY='971a6c461c7c46e28b04ff621ac62a61';
+let lastGeoLat=0,lastGeoLng=0,lastAcc=0;
+function reverseGeocode(lat,lng){
+  if(Math.abs(lat-lastGeoLat)<5e-4&&Math.abs(lng-lastGeoLng)<5e-4)return;
+  lastGeoLat=lat;lastGeoLng=lng;
+  fetch('https://restapi.amap.com/v3/geocode/regeo?key='+AMAP_KEY+'&location='+lng+','+lat+'&extensions=base&output=json')
+    .then(r=>r.json()).then(d=>{
+      if(d.status==='1'&&d.regeocode){
+        const c=d.regeocode.addressComponent||{};
+        const dis=c.district?c.district+' · ':'';
+        const st=(c.streetNumber||{}).street||'';
+        const nb=(c.streetNumber||{}).number||'';
+        gpsMarker.setTooltipContent((dis+st+(nb||'附近')).trim()||d.regeocode.formatted_address||'');
       }
-    })
-    .catch(() => {});
+    }).catch(()=>{});
 }
 
-// 轨迹线
-let trackLine = L.polyline([], {
-  color: '#4f8fff', weight: 2, opacity: 0.6
-}).addTo(leafMap);
-let trackPoints = [];
-
-// 首次自动 resize
-setTimeout(() => leafMap.invalidateSize(), 300);
-window.addEventListener('resize', () => leafMap.invalidateSize());
-
-// ========== 缩放控制 ==========
-function zoomIn()  { leafMap.zoomIn(); }
-function zoomOut() { leafMap.zoomOut(); }
-function centerOnMarker() {
-  const pos = gpsMarker.getLatLng();
-  leafMap.setView(pos, 16);
+// ============= 跟随模式 =============
+let followMode=!1;
+function toggleFollow(){
+  followMode=!followMode;
+  $('btnFollow').classList.toggle('on',followMode);
+  if(followMode){const p=gpsMarker.getLatLng();leafMap.setView(p,16)}
 }
 
-// ========== 数据更新 ==========
-client.on('message', (topic, payload) => {
-  try {
-    const d = JSON.parse(payload.toString());
-    if (d.fix > 0 && d.lat && d.lng && (d.lat !== 0 || d.lng !== 0)) {
+// ============= 上滑面板 =============
+function togglePanel(){
+  $('infobar').classList.toggle('expanded');
+}
+
+// ============= 分享位置 =============
+function shareLoc(){
+  const p=gpsMarker.getLatLng();
+  const url=location.origin+location.pathname+'?lat='+p.lat.toFixed(6)+'&lng='+p.lng.toFixed(6);
+  navigator.clipboard?.writeText(url).then(()=>{
+    const t=$('shareToast');t.textContent='✅ 位置链接已复制';t.classList.add('show');
+    setTimeout(()=>t.classList.remove('show'),2e3);
+  }).catch(()=>{
+    const t=$('shareToast');t.textContent=url;t.classList.add('show');
+    setTimeout(()=>t.classList.remove('show'),3e3);
+  });
+}
+
+// ============= PWA 安装 =============
+let deferredPrompt;
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;$('btnInstall').style.display=''});
+function installPWA(){deferredPrompt&&(deferredPrompt.prompt(),deferredPrompt.userChoice.then(()=>{$('btnInstall').style.display='none'}))}
+
+// ============= 历史回放 =============
+let pbData=[],pbIndex=-1,pbRunning=!1,pbTimer=null,pbSpeed=1;
+function togglePlayback(){
+  $('playback').classList.toggle('show');
+  // 默认填今天日期
+  const d=new Date();
+  $('pbDate').value=d.toISOString().slice(0,10);
+  loadPlayback();
+}
+
+function loadPlayback(){
+  pbPause();pbIndex=-1;
+  const date=$('pbDate').value||new Date().toISOString().slice(0,10);
+  // 从 PHP API 加载历史
+  fetch('https://www.sseeee.com/esp32/mmq/api.php?date='+date)
+    .then(r=>r.json()).then(d=>{
+      if(d.status==='ok'&&d.data.length>0){
+        pbData=d.data.filter(p=>p.lat&&p.lng&&p.lat!==0);
+        $('pbLabel').textContent=pbData.length+'条 ';pbPlay();
+      }else{
+        pbData=[];$('pbLabel').textContent='无数据';
+      }
+    }).catch(()=>{$('pbLabel').textContent='API 不可用'});
+}
+
+function pbPlay(){
+  if(!pbData.length||pbRunning)return;
+  pbRunning=!0;$('pbPlayBtn').textContent='⏯';
+  if(pbIndex<0)pbIndex=0;
+  const step=()=>{
+    if(!pbRunning||pbIndex>=pbData.length){pbPause();return}
+    const p=pbData[pbIndex];
+    gpsMarker.setLatLng([p.lat,p.lng]);
+    leafMap.setView([p.lat,p.lng],leafMap.getZoom());
+    $('coords').textContent=p.lng.toFixed(6)+', '+p.lat.toFixed(6);
+    $('sat').textContent=p.sat||'--';$('alt').textContent=(p.alt||0).toFixed(1);
+    $('spd').textContent=(p.spd||0).toFixed(1);$('ts').textContent=p.ts||'--';
+    reverseGeocode(p.lat,p.lng);
+    addTrackPoint(p.lat,p.lng,p.spd);
+    pbIndex++;
+    $('pbFill').style.width=(pbIndex/pbData.length*100)+'%';
+    $('pbLabel').textContent=pbIndex+'/'+pbData.length;
+    pbTimer=setTimeout(step,300/pbSpeed);
+  };
+  step();
+}
+function pbPause(){pbRunning=!1;$('pbPlayBtn').textContent='▶';clearTimeout(pbTimer)}
+function pbStep(n){pbRunning&&pbPause();pbIndex=Math.max(0,Math.min(pbData.length-1,(pbIndex<0?0:pbIndex)+n));const p=pbData[pbIndex];if(p){gpsMarker.setLatLng([p.lat,p.lng]);leafMap.setView([p.lat,p.lng],leafMap.getZoom());$('pbFill').style.width=(pbIndex/pbData.length*100)+'%';$('pbLabel').textContent=pbIndex+'/'+pbData.length}}
+function pbSeek(e){const rect=$('pbProg').getBoundingClientRect(),pct=(e.clientX-rect.left)/rect.width;pbIndex=Math.floor(pct*pbData.length);const p=pbData[pbIndex];if(p){gpsMarker.setLatLng([p.lat,p.lng]);leafMap.setView([p.lat,p.lng],leafMap.getZoom());$('pbFill').style.width=(pbIndex/pbData.length*100)+'%'}}
+
+// ============= 围栏通知 =============
+let fenceCenter=null,fenceRadius=500;
+let lastFenceMsg='';
+
+function checkFence(lat,lng){
+  if(!fenceCenter||window.Notification?.permission!=='granted')return;
+  const d=Math.sqrt(Math.pow((lat-fenceCenter[0])*111320,2)+Math.pow((lng-fenceCenter[1])*111320*Math.cos(lat*Math.PI/180),2));
+  if(d>fenceRadius&&lastFenceMsg!=='out'){
+    lastFenceMsg='out';
+    try{new Notification('设备离开围栏',{body:'距离围栏中心 '+Math.round(d)+'m',icon:'🚗'})}catch(e){}
+  }else if(d<=fenceRadius&&lastFenceMsg!=='in'){
+    lastFenceMsg='in';
+    try{new Notification('设备进入围栏',{body:'距离围栏中心 '+Math.round(d)+'m',icon:'🚗'})}catch(e){}
+  }
+  $('fence').textContent=lastFenceMsg==='in'?'内':'外';
+}
+// 请求通知权限
+function requestNotify(){
+  if('Notification' in window&&Notification.permission==='default')
+    Notification.requestPermission();
+  // 初始化围栏中心为当前位置
+  if(!fenceCenter){const p=gpsMarker.getLatLng();fenceCenter=[p.lat,p.lng]}
+}
+
+// ============= 缩放 =============
+function zoomIn(){leafMap.zoomIn()}
+function zoomOut(){leafMap.zoomOut()}
+function centerOnMarker(){
+  const p=gpsMarker.getLatLng();leafMap.setView(p,16);
+}
+
+// ============= 相对时间 =============
+function updateRelativeTime(){
+  if(!lastUpdate)return;
+  const elapsed=Math.floor((Date.now()-lastUpdate)/1e3);
+  let txt;
+  if(elapsed<10)txt='刚刚';
+  else if(elapsed<60)txt=elapsed+'秒前';
+  else if(elapsed<3600)txt=Math.floor(elapsed/60)+'分钟前';
+  else txt=Math.floor(elapsed/3600)+'小时前';
+  $('ts').textContent=txt;
+}
+
+// ============= 数据更新 =============
+client.on('message',(topic,payload)=>{
+  lastDataTime=Date.now();
+  try{
+    const d=JSON.parse(payload.toString());
+    if(d.fix>0&&d.lat&&d.lng&&(d.lat!==0||d.lng!==0)){
       updateDisplay(d);
     }
-  } catch(e) {}
+  }catch(e){}
 });
 
-function updateDisplay(d) {
-  const lat = Number(d.lat), lng = Number(d.lng);
+function updateDisplay(d){
+  const lat=Number(d.lat),lng=Number(d.lng);
+  lastUpdate=Date.now();
+  lastAcc=d.accuracy||d.acc||0;
 
-  // 逆地理查询地址
-  reverseGeocode(lat, lng);
+  reverseGeocode(lat,lng);
+  gpsMarker.setLatLng([lat,lng]);
+  accuracyCircle.setLatLng([lat,lng]);
 
-  // 移动标记
-  gpsMarker.setLatLng([lat, lng]);
-  accuracyCircle.setLatLng([lat, lng]);
+  if(followMode)leafMap.setView([lat,lng],leafMap.getZoom(),{animate:!0});
 
-  // 轨迹
-  trackPoints.push([lat, lng]);
-  if (trackPoints.length > 500) trackPoints.shift();
-  trackLine.setLatLngs(trackPoints);
+  addTrackPoint(lat,lng,Number(d.spd||0));
+  gpsHistory.push({ts:Date.now(),lat,lng,spd:d.spd||0,alt:d.alt||0,sat:d.sat||0});
+  if(gpsHistory.length>1e4)gpsHistory.shift();
 
-  // 只跟踪定位（不抢用户视角）
-  if (d.sat > 0) {
-    leafMap.setView([lat, lng], leafMap.getZoom(), { animate: true });
-  }
+  checkFence(lat,lng);
+  updateRelativeTime();
 
-  // 更新信息栏
-  $('coords').textContent = lng.toFixed(6) + ', ' + lat.toFixed(6);
-  $('sat').textContent = d.sat || '--';
-  $('alt').textContent = (d.alt || 0).toFixed(1);
-  $('spd').textContent = (d.spd || 0).toFixed(1);
-  $('ts').textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  $('coords').textContent=lng.toFixed(6)+', '+lat.toFixed(6);
+  $('sat').textContent=d.sat||'--';
+  $('alt').textContent=(d.alt||0).toFixed(1);
+  $('spd').textContent=(d.spd||0).toFixed(1);
+  $('acc').textContent=lastAcc||'--';
 }
 
-// ========== 触摸缩放 ==========
-document.addEventListener('gesturestart', e => e.preventDefault(), { passive: false });
-document.addEventListener('gesturechange', e => e.preventDefault(), { passive: false });
-document.addEventListener('gestureend', e => e.preventDefault(), { passive: false });
+// ============= 启动 =============
+setTimeout(()=>leafMap.invalidateSize(),300);
+window.addEventListener('resize',()=>leafMap.invalidateSize());
+document.addEventListener('gesturestart',e=>e.preventDefault(),{passive:!1});
+document.addEventListener('gesturechange',e=>e.preventDefault(),{passive:!1});
+document.addEventListener('gestureend',e=>e.preventDefault(),{passive:!1});
+requestNotify();
 </script>
 </body>
 </html>
