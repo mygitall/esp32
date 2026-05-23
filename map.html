@@ -218,48 +218,28 @@ const gpsMarker=L.marker([31.23,121.47],{icon:carIcon}).addTo(leafMap).bindToolt
 // 精度圈
 const accuracyCircle=L.circle([31.23,121.47],{radius:100,color:'#4f8fff',weight:1,opacity:.5,fillOpacity:.1}).addTo(leafMap);
 
-// 轨迹线（支持热力色）
-let trackPoints=[],trackSegments=[],gpsHistory=[],lastLat=null,lastLng=null;
-
-function addTrackPoint(lat,lng,spd){
-  trackPoints.push([lat,lng]);
-  if(trackPoints.length>500)trackPoints.shift();
-  // 颜色按速度着色
-  const speed=spd||0,c=speed>40?'#ff4757':speed>20?'#ffba3b':speed>5?'#4f8fff':'#00d4aa';
-  if(lastLat!==null){
-    trackSegments.push({coords:[[lastLat,lastLng],[lat,lng]],color:c});
-    if(trackSegments.length>500)trackSegments.shift();
-  }
-  lastLat=lat;lastLng=lng;
-
-  // 重绘轨迹线
-  drawTrack();
-}
+// 轨迹线 — 用已走过的 ROUTE 点画线，贴合真实路网
+let traveledIdx=0,traveledPath=[],totalMileage=0;
 
 function drawTrack(){
-  // 移除旧线
   leafMap.eachLayer(l=>{if(l._trackLine)leafMap.removeLayer(l)});
-  // 简单折线（省性能）
-  if(trackPoints.length>1){
-    const line=L.polyline(trackPoints,{color:'#4f8fff',weight:3,opacity:.6});
+  if(traveledPath.length>1){
+    const pts=traveledPath.map(p=>[p[0],p[1]]);
+    const line=L.polyline(pts,{color:'#4f8fff',weight:3,opacity:.7});
     line._trackLine=!0;line.addTo(leafMap);
   }
-  // 里程
-  updateMileage();
 }
 
-let totalMileage=0;
 function updateMileage(){
-  if(trackPoints.length<2)return;
+  if(traveledPath.length<2)return;
   let d=0;
-  for(let i=1;i<trackPoints.length;i++){
-    const lat1=trackPoints[i-1][0],lng1=trackPoints[i-1][1],
-          lat2=trackPoints[i][0],lng2=trackPoints[i][1];
-    const r=.0089932; // 0.01deg ≈ 1.11km at lat 30
+  for(let i=1;i<traveledPath.length;i++){
+    const lat1=traveledPath[i-1][0],lng1=traveledPath[i-1][1],
+          lat2=traveledPath[i][0],lng2=traveledPath[i][1];
     d+=Math.sqrt(Math.pow((lat2-lat1)*111.32,2)+Math.pow((lng2-lng1)*111.32*Math.cos(lat1*Math.PI/180),2));
   }
-  totalMileage+=d*.1; // 累积
-  $('mileage').textContent='📏 今日里程: '+totalMileage.toFixed(2)+' km';
+  totalMileage=d;
+  $('mileage').textContent='📏 行驶里程: '+totalMileage.toFixed(2)+' km';
 }
 
 // ============= 逆地理编码 =============
@@ -1551,7 +1531,8 @@ function toggleSim(){
   if(simRunning){
     $('connDot').classList.add('live');$('connText').textContent='模拟中';
     $('btnSim').textContent='⏹';
-    simHistory=[];  // 清空旧历史
+    simHistory=[];traveledPath=[];traveledIdx=0;totalMileage=0;  // 清空
+    drawTrack();updateMileage();
     // 从上次位置最近的路段继续
     let bestDist=Infinity,bestSeg=0;
     (simForward?ROUTE:ROUTE_REV).forEach((p,i)=>{
@@ -1574,7 +1555,7 @@ let simSpd=0,simTargetSpd=30,simBehavior='cruise',simBehaviorTimer=0;
 function simStep(){
   const route=simForward?ROUTE:ROUTE_REV;
   const segs=route.length-1;
-  if(simSegIdx>=segs){simSegIdx=0;simSegProgress=0;simForward=!simForward}
+  if(simSegIdx>=segs){simSegIdx=0;simSegProgress=0;simForward=!simForward;traveledPath=[];traveledIdx=0}
 
   const [lat0,lng0,limit]=route[simSegIdx];
   const [lat1,lng1,limit2]=route[simSegIdx+1];
@@ -1616,7 +1597,7 @@ function simStep(){
   if(simSegProgress>=1){
     simSegProgress-=1;
     simSegIdx++;
-    if(simSegIdx>=segs){simSegIdx=0;simSegProgress=0;simForward=!simForward;return simStep()}
+    if(simSegIdx>=segs){simSegIdx=0;simSegProgress=0;simForward=!simForward;traveledPath=[];traveledIdx=0;return simStep()}
     return simStep();
   }
 
@@ -1640,6 +1621,17 @@ function simStep(){
 
   // === 模拟拥堵随机停顿（1~2 次） ===
   if(simSpd<3&&Math.random()<.3)simSpd=0;
+
+  // 轨迹 = 已走过的 ROUTE 路网点（完全贴合道路）
+  while(simSegIdx>traveledIdx){
+    const p=route[traveledIdx];
+    traveledPath.push([p[0],p[1],p[2]]);
+    traveledIdx++;
+  }
+  // 最后加当前位置
+  traveledPath.push([dLat,dLng,simSpd]);
+  if(traveledPath.length>3000)traveledPath.shift();
+  drawTrack();updateMileage();
 
   const fakeData={
     lat:dLat,lng:dLng,
@@ -1712,7 +1704,7 @@ function pbPlay(){
     $('sat').textContent=p.sat||'--';$('alt').textContent=(p.alt||0).toFixed(1);
     $('spd').textContent=(p.spd||0).toFixed(1);$('ts').textContent=p.ts||'--';
     reverseGeocode(p.lat,p.lng);
-    addTrackPoint(p.lat,p.lng,p.spd);
+    traveledPath.push([p.lat,p.lng,p.spd||0]);drawTrack();updateMileage();
     pbIndex++;
     $('pbFill').style.width=(pbIndex/pbData.length*100)+'%';
     $('pbLabel').textContent=pbIndex+'/'+pbData.length;
@@ -1789,7 +1781,7 @@ function updateDisplay(d){
 
   if(followMode)leafMap.setView([lat,lng],leafMap.getZoom(),{animate:!0});
 
-  addTrackPoint(lat,lng,Number(d.spd||0));
+  traveledPath.push([lat,lng,Number(d.spd||0)]);drawTrack();updateMileage();
   gpsHistory.push({ts:Date.now(),lat,lng,spd:d.spd||0,alt:d.alt||0,sat:d.sat||0});
   if(gpsHistory.length>1e4)gpsHistory.shift();
 
