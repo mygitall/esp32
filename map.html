@@ -1012,7 +1012,6 @@ function simStep(){
   }
 
   // Catmull-Rom 样条：4 控制点平滑曲线
-  const route=simForward?ROUTE:ROUTE_REV;
   const i0=Math.max(0,simSegIdx-1);
   const i3=Math.min(segs,simSegIdx+2);
   simLat=catmullRom(route[i0][0],lat0,lat1,route[i3][0],simSegProgress);
