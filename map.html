@@ -305,15 +305,51 @@ function shareLoc(){
   });
 }
 
-// ============= 模拟定位 =============
+// ============= 模拟定位 — 上海人民广场 → 盐城滨海（沿 G15） =============
+// 途经点经纬度 [lat, lng, 限速km/h]
+const ROUTE=[
+  [31.2304,121.4737,40],  // 0  人民广场
+  [31.2530,121.4500,50],  // 1  静安寺/武宁路
+  [31.2850,121.4200,60],  // 2  中环/沪嘉高速入口
+  [31.3200,121.3600,80],  // 3  嘉定/G15入口
+  [31.4500,121.2200,110], // 4  太仓
+  [31.5600,121.0500,110], // 5  常熟
+  [31.7800,120.9200,110], // 6  张家港
+  [31.9600,120.8800,110], // 7  南通/苏通大桥北
+  [32.1000,120.8200,110], // 8  如皋
+  [32.2600,120.7500,110], // 9  海安
+  [32.4800,120.6000,110], // 10 东台
+  [32.7500,120.4800,100], // 11 大丰北
+  [33.0000,120.3500,100], // 12 盐城南
+  [33.3500,120.1500,90],  // 13 盐城市区
+  [33.6500,120.0200,80],  // 14 射阳/阜宁
+  [33.9200,119.8800,70],  // 15 滨海县南
+  [34.0000,119.8500,40],  // 16 滨海县城
+];
+// 反向路线（滨海→上海）
+const ROUTE_REV=ROUTE.slice().reverse();
+
 let simRunning=!1,simTimer=null;
-let simLat=31.2222,simLng=121.4581,simDir=Math.random()*Math.PI*2;
+let simSegIdx=0,simSegProgress=0;  // 当前路段索引, 路段内进度 0~1
+let simForward=!0;  // true=上海→滨海, false=滨海→上海
+let simLat=ROUTE[0][0],simLng=ROUTE[0][1];
+
+function lerp(a,b,t){return a+(b-a)*t}
 
 function toggleSim(){
   simRunning=!simRunning;$('btnSim').classList.toggle('on',simRunning);
   if(simRunning){
     $('connDot').classList.add('live');$('connText').textContent='模拟中';
-    $('btnSim').textContent='⏹';simStep();simTimer=setInterval(simStep,3e3);
+    $('btnSim').textContent='⏹';
+    // 从上次位置最近的路段继续
+    let bestDist=Infinity,bestSeg=0;
+    (simForward?ROUTE:ROUTE_REV).forEach((p,i)=>{
+      const d=Math.hypot(simLat-p[0],simLng-p[1]);
+      if(d<bestDist){bestDist=d;bestSeg=i}
+    });
+    simSegIdx=Math.min(bestSeg,(simForward?ROUTE:ROUTE_REV).length-2);
+    simSegProgress=0;
+    simStep();simTimer=setInterval(simStep,3e3);
   }else{
     clearInterval(simTimer);
     $('connText').textContent='手动停止';
@@ -322,31 +358,47 @@ function toggleSim(){
 }
 
 function simStep(){
-  // 随机改变方向（模拟城市街道转弯）
-  simDir+=(Math.random()-.5)*1.2;
-  // 随机速度 10~80 km/h
-  const spd=10+Math.random()*70;
-  // 约 3s 移动距离(度) = speed * 3 / 111320  约0.00001度/m
-  const dist=spd*3/3.6/111320;
-  simLat+=Math.cos(simDir)*dist;
-  simLng+=Math.sin(simDir)*dist;
+  const route=simForward?ROUTE:ROUTE_REV;
+  const segs=route.length-1;
+  if(simSegIdx>=segs){simSegIdx=0;simSegProgress=0;simForward=!simForward}
 
-  // 周期性向市中心回归（避免跑太远）
-  if(Math.random()<.05){simDir+=Math.PI*(simLat>31.23?1:-1)}
+  const [lat0,lng0]=route[simSegIdx];
+  const [lat1,lng1,limit]=route[simSegIdx+1];
+
+  // 路段内前进（城区慢、高速快）
+  const spd=limit*(.7+Math.random()*.3);  // 70%~100% 限速
+  const segLen=Math.hypot((lat1-lat0)*111320,(lng1-lng0)*111320*Math.cos((lat0+lat1)/2*Math.PI/180));
+  const step=spd*3/3.6/segLen;  // 3 秒前进比例
+  simSegProgress+=step;
+
+  if(simSegProgress>=1){
+    simSegProgress-=1;
+    simSegIdx++;
+    if(simSegIdx>=segs){simSegIdx=0;simSegProgress=0;simForward=!simForward;return simStep()}
+    return simStep();
+  }
+
+  simLat=lerp(lat0,lat1,simSegProgress);
+  simLng=lerp(lng0,lng1,simSegProgress);
+
+  // 添加微小抖动模拟真实 GPS（±5m）
+  const jitter=.00005;
+  const dLat=simLat+(Math.random()-.5)*jitter;
+  const dLng=simLng+(Math.random()-.5)*jitter;
 
   const fakeData={
-    lat:simLat,lng:simLng,
-    alt:Number((5+Math.random()*40).toFixed(1)),
+    lat:dLat,lng:dLng,
+    alt:Number((3+Math.random()*8).toFixed(1)),
     spd:Number(spd.toFixed(1)),
     sat:8+Math.floor(Math.random()*10),
-    fix:1,acc:10+Math.floor(Math.random()*40)
+    fix:1,acc:5+Math.floor(Math.random()*15)
   };
   updateDisplay(fakeData);
 
-  // 模拟 MQTT 发布 esp32/gps（以便历史回放等依赖 MQTT 的逻辑能感知）
+  // 注入 MQTT 消息事件
   try{
-    const handler=client._events?.message;
-    if(handler)handler('esp32/gps',{toString:()=>JSON.stringify(fakeData)});
+    const h=client._events?.message;
+    if(h)h('esp32/gps',{toString:()=>JSON.stringify(fakeData)});
   }catch(e){}
 }
 
