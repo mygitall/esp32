@@ -17,6 +17,17 @@
     --bg:#0b0e14; --surface:#141820; --surface2:#1a1f2b;
     --border:#252a35; --text:#e2e4e9; --text2:#8b8f9a; --text3:#5a5e6a;
     --green:#00d4aa; --red:#ff4757; --accent:#4f8fff;
+    --panel-bg:rgba(20,24,32,0.92);
+    --btn-bg:rgba(20,24,32,0.9);
+    --title-from:#e2e4e9; --title-to:#8b8f9a;
+  }
+
+  body.light {
+    --bg:#f5f5f5; --surface:#fff; --surface2:#f0f0f0;
+    --border:#ddd; --text:#333; --text2:#666; --text3:#999;
+    --panel-bg:rgba(255,255,255,0.92);
+    --btn-bg:rgba(255,255,255,0.9);
+    --title-from:#333; --title-to:#666;
   }
 
   body {
@@ -43,13 +54,13 @@
 
   .title {
     font-size: 1.1rem; font-weight: 700; letter-spacing: -0.3px;
-    background: linear-gradient(135deg, #e2e4e9, #8b8f9a);
+    background: linear-gradient(135deg, var(--title-from), var(--title-to));
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
   }
 
   .conn-badge {
     display: flex; align-items: center; gap: 8px;
-    background: rgba(26,31,43,0.9); backdrop-filter: blur(10px);
+    background: var(--panel-bg); backdrop-filter: blur(10px);
     border: 1px solid var(--border);
     border-radius: 100px; padding: 6px 14px;
     font-size: 0.7rem; color: var(--text2);
@@ -63,7 +74,7 @@
   /* 底部信息栏 */
   .infobar {
     position: absolute; bottom: 20px; left: 16px; right: 16px; z-index: 1000;
-    background: rgba(20,24,32,0.92); backdrop-filter: blur(12px);
+    background: var(--panel-bg); backdrop-filter: blur(12px);
     border: 1px solid var(--border); border-radius: 16px;
     padding: 14px 18px;
     display: grid; grid-template-columns: 1fr 1fr;
@@ -85,7 +96,7 @@
   }
   .zoom-ctrl button {
     width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--border);
-    background: rgba(20,24,32,0.9); backdrop-filter: blur(10px);
+    background: var(--btn-bg); backdrop-filter: blur(10px);
     color: var(--text); font-size: 1.3rem; cursor: pointer;
     transition: background 0.2s;
   }
@@ -96,11 +107,22 @@
     position: absolute; right: 16px; bottom: 140px; z-index: 1000;
     width: 40px; height: 40px; border-radius: 12px;
     border: 1px solid var(--border);
-    background: rgba(20,24,32,0.9); backdrop-filter: blur(10px);
+    background: var(--btn-bg); backdrop-filter: blur(10px);
     color: var(--text); font-size: 1.2rem; cursor: pointer;
     transition: background 0.2s;
   }
   .locate-btn:active { background: rgba(79,143,255,0.2); }
+
+  /* 主题切换按钮 */
+  .theme-btn {
+    position: absolute; right: 16px; bottom: 190px; z-index: 1000;
+    width: 40px; height: 40px; border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--btn-bg); backdrop-filter: blur(10px);
+    color: var(--text); font-size: 1.2rem; cursor: pointer;
+    transition: background 0.2s;
+  }
+  .theme-btn:active { background: rgba(79,143,255,0.2); }
 
   /* 响应式 */
   @media (min-width: 768px) {
@@ -115,7 +137,7 @@
 <div id="map"></div>
 
 <div class="topbar">
-  <div class="title">ESP32 GPS 定位</div>
+  <div class="title">GPS 定位，张伟伟</div>
   <div class="conn-badge">
     <div class="conn-dot" id="connDot"></div>
     <span id="connText">连接中</span>
@@ -128,6 +150,7 @@
 </div>
 
 <button class="locate-btn" onclick="centerOnMarker()" title="定位设备">📍</button>
+<button class="theme-btn" onclick="toggleTheme()" title="切换深/浅色" id="themeBtn">🌙</button>
 
 <div class="infobar" id="infobar">
   <div class="info-coords" id="coords">等待 GPS 数据...</div>
@@ -170,10 +193,38 @@ const leafMap = L.map('map', {
   zoomControl: false
 });
 
-// 深色地图底图
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-  maxZoom: 19
-}).addTo(leafMap);
+// 双主题地图底图
+const darkTiles = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 });
+const lightTiles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 });
+darkTiles.addTo(leafMap);  // 默认深色
+
+function toggleTheme() {
+  const isLight = document.body.classList.toggle('light');
+  if (isLight) {
+    leafMap.removeLayer(darkTiles);
+    lightTiles.addTo(leafMap);
+    $('themeBtn').textContent = '☀️';
+    document.querySelector('meta[name="theme-color"]').content = '#f5f5f5';
+    localStorage.setItem('map_theme', 'light');
+  } else {
+    leafMap.removeLayer(lightTiles);
+    darkTiles.addTo(leafMap);
+    $('themeBtn').textContent = '🌙';
+    document.querySelector('meta[name="theme-color"]').content = '#0b0e14';
+    localStorage.setItem('map_theme', 'dark');
+  }
+}
+
+// 恢复主题偏好
+(function() {
+  if (localStorage.getItem('map_theme') === 'light') {
+    document.body.classList.add('light');
+    leafMap.removeLayer(darkTiles);
+    lightTiles.addTo(leafMap);
+    $('themeBtn').textContent = '☀️';
+    document.querySelector('meta[name="theme-color"]').content = '#f5f5f5';
+  }
+})();
 
 // 小车图标（SVG）
 const carIcon = L.divIcon({
