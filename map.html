@@ -125,6 +125,7 @@
   <button class="rbtn" onclick="centerOnMarker()" title="定位设备">📍</button>
   <button class="rbtn" onclick="toggleTheme()" title="深/浅色" id="themeBtn">🌙</button>
   <button class="rbtn" id="btnPlayback" onclick="togglePlayback()" title="历史回放">⏮</button>
+  <button class="rbtn" id="btnSim" onclick="toggleSim()" title="模拟定位">🧪</button>
   <button class="rbtn" onclick="shareLoc()" title="分享位置">🔗</button>
   <button class="rbtn" id="btnInstall" onclick="installPWA()" title="添加到桌面" style="display:none">📲</button>
 </div>
@@ -302,6 +303,51 @@ function shareLoc(){
     const t=$('shareToast');t.textContent=url;t.classList.add('show');
     setTimeout(()=>t.classList.remove('show'),3e3);
   });
+}
+
+// ============= 模拟定位 =============
+let simRunning=!1,simTimer=null;
+let simLat=31.2222,simLng=121.4581,simDir=Math.random()*Math.PI*2;
+
+function toggleSim(){
+  simRunning=!simRunning;$('btnSim').classList.toggle('on',simRunning);
+  if(simRunning){
+    $('connDot').classList.add('live');$('connText').textContent='模拟中';
+    $('btnSim').textContent='⏹';simStep();simTimer=setInterval(simStep,3e3);
+  }else{
+    clearInterval(simTimer);
+    $('connText').textContent='手动停止';
+    setTimeout(()=>{$('btnSim').textContent='🧪'},1500);
+  }
+}
+
+function simStep(){
+  // 随机改变方向（模拟城市街道转弯）
+  simDir+=(Math.random()-.5)*1.2;
+  // 随机速度 10~80 km/h
+  const spd=10+Math.random()*70;
+  // 约 3s 移动距离(度) = speed * 3 / 111320  约0.00001度/m
+  const dist=spd*3/3.6/111320;
+  simLat+=Math.cos(simDir)*dist;
+  simLng+=Math.sin(simDir)*dist;
+
+  // 周期性向市中心回归（避免跑太远）
+  if(Math.random()<.05){simDir+=Math.PI*(simLat>31.23?1:-1)}
+
+  const fakeData={
+    lat:simLat,lng:simLng,
+    alt:Number((5+Math.random()*40).toFixed(1)),
+    spd:Number(spd.toFixed(1)),
+    sat:8+Math.floor(Math.random()*10),
+    fix:1,acc:10+Math.floor(Math.random()*40)
+  };
+  updateDisplay(fakeData);
+
+  // 模拟 MQTT 发布 esp32/gps（以便历史回放等依赖 MQTT 的逻辑能感知）
+  try{
+    const handler=client._events?.message;
+    if(handler)handler('esp32/gps',{toString:()=>JSON.stringify(fakeData)});
+  }catch(e){}
 }
 
 // ============= PWA 安装 =============
