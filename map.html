@@ -137,6 +137,18 @@
   }
   .addr-tooltip::before { border-top-color: rgba(0,0,0,0.78) !important; }
 
+  /* 移动端放大底部按钮 */
+  @media (max-width: 767px) {
+    .locate-btn {
+      width: 56px; height: 56px; font-size: 1.8rem;
+      bottom: 200px;
+    }
+    .theme-btn {
+      width: 56px; height: 56px; font-size: 1.8rem;
+      bottom: 265px;
+    }
+  }
+
   /* 响应式 */
   @media (min-width: 768px) {
     .infobar { left: 50%; right: auto; transform: translateX(-50%); min-width: 500px; }
