@@ -386,18 +386,49 @@ function toggleSim(){
   }
 }
 
+// 模拟驾驶行为参数
+let simSpd=0,simTargetSpd=30,simBehavior='cruise',simBehaviorTimer=0;
+
 function simStep(){
   const route=simForward?ROUTE:ROUTE_REV;
   const segs=route.length-1;
   if(simSegIdx>=segs){simSegIdx=0;simSegProgress=0;simForward=!simForward}
 
-  const [lat0,lng0]=route[simSegIdx];
-  const [lat1,lng1,limit]=route[simSegIdx+1];
+  const [lat0,lng0,limit]=route[simSegIdx];
+  const [lat1,lng1,limit2]=route[simSegIdx+1];
 
-  // 路段内前进（城区慢、高速快）
-  const spd=limit*(.7+Math.random()*.3);  // 70%~100% 限速
+  // === 驾驶行为随机切换（模拟真实路况） ===
+  simBehaviorTimer--;
+  if(simBehaviorTimer<=0){
+    const r=Math.random();
+    if(r<.3){simBehavior='cruise';simBehaviorTimer=8+Math.floor(Math.random()*20)}     // 巡航 8~28 次
+    else if(r<.55){simBehavior='accel';simBehaviorTimer=3+Math.floor(Math.random()*6)} // 加速 3~8 次
+    else if(r<.72){simBehavior='brake';simBehaviorTimer=2+Math.floor(Math.random()*4)}  // 刹车 2~5 次
+    else if(r<.85){simBehavior='slow';simBehaviorTimer=5+Math.floor(Math.random()*10)}  // 拥堵慢行
+    else{simBehavior='pause';simBehaviorTimer=1+Math.floor(Math.random()*3)}            // 红绿灯暂停
+  }
+
+  // === 目标速度计算 ===
+  if(simBehavior==='pause')simTargetSpd=0;
+  else if(simBehavior==='brake')simTargetSpd=Math.max(0,simSpd-(Math.random()*limit*.5));
+  else if(simBehavior==='accel')simTargetSpd=limit*(.85+Math.random()*.15);
+  else if(simBehavior==='slow')simTargetSpd=limit*(.3+Math.random()*.25);
+  else simTargetSpd=limit*(.75+Math.random()*.25);
+
+  // 城区限速 30~40 时更保守
+  if(limit<=40)simTargetSpd=Math.min(simTargetSpd,limit*(.8+Math.random()*.2));
+  // 接近途经点时稍微减速
+  if(simSegProgress>.8)simTargetSpd*=.85;
+
+  // === 速度渐变（模拟真实加减速，非瞬时跳变） ===
+  const accelRate=simBehavior==='brake'?8:3; // 刹车快、加速慢
+  if(simSpd<simTargetSpd)simSpd=Math.min(simTargetSpd,simSpd+accelRate*Math.random());
+  else if(simSpd>simTargetSpd)simSpd=Math.max(simTargetSpd,simSpd-accelRate*Math.random());
+  simSpd=Math.max(0,Math.min(limit*1.1,simSpd));
+
+  // === 位置计算 ===
   const segLen=Math.hypot((lat1-lat0)*111320,(lng1-lng0)*111320*Math.cos((lat0+lat1)/2*Math.PI/180));
-  const step=spd*3/3.6/segLen;  // 3 秒前进比例
+  const step=Math.max(.001,simSpd*3/3.6/segLen);
   simSegProgress+=step;
 
   if(simSegProgress>=1){
@@ -410,17 +441,26 @@ function simStep(){
   simLat=lerp(lat0,lat1,simSegProgress);
   simLng=lerp(lng0,lng1,simSegProgress);
 
-  // 添加微小抖动模拟真实 GPS（±5m）
-  const jitter=.00005;
+  // === GPS 抖动（城市大、高速小） ===
+  const jitter=limit<=50?.00018:.00008;  // ±20m 城市 / ±9m 高速
   const dLat=simLat+(Math.random()-.5)*jitter;
   const dLng=simLng+(Math.random()-.5)*jitter;
 
+  // === 城市峡谷信号衰减 ===
+  let sat=12+Math.floor(Math.random()*8);
+  let acc=8+Math.floor(Math.random()*12);
+  let fix=1;
+  if(limit<=45&&Math.random()<.04){sat=3+Math.floor(Math.random()*5);acc=30+Math.floor(Math.random()*50)}  // 高楼遮挡
+  if(limit<=35&&Math.random()<.015){fix=0;sat=0;acc=999}  // 隧道/高架下丢失信号
+
+  // === 模拟拥堵随机停顿（1~2 次） ===
+  if(simSpd<3&&Math.random()<.3)simSpd=0;
+
   const fakeData={
     lat:dLat,lng:dLng,
-    alt:Number((3+Math.random()*8).toFixed(1)),
-    spd:Number(spd.toFixed(1)),
-    sat:8+Math.floor(Math.random()*10),
-    fix:1,acc:5+Math.floor(Math.random()*15),
+    alt:Number((2+Math.random()*6).toFixed(1)),
+    spd:Number(simSpd.toFixed(1)),
+    sat,fix,acc,
     ts:new Date().toISOString().slice(11,19)
   };
   updateDisplay(fakeData);
