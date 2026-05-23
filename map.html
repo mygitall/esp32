@@ -930,6 +930,11 @@ let simSegIdx=0,simSegProgress=0;  // 当前路段索引, 路段内进度 0~1
 let simForward=!0;  // true=上海→滨海, false=滨海→上海
 let simLat=ROUTE[0][0],simLng=ROUTE[0][1];
 
+// Catmull-Rom 三次样条插值 — 途经点之间走平滑曲线，贴合道路弧度
+function catmullRom(p0,p1,p2,p3,t){
+  const t2=t*t,t3=t2*t;
+  return .5*((2*p1)+(-p0+p2)*t+(2*p0-5*p1+4*p2-p3)*t2+(-p0+3*p1-3*p2+p3)*t3);
+}
 function lerp(a,b,t){return a+(b-a)*t}
 
 function toggleSim(){
@@ -946,7 +951,7 @@ function toggleSim(){
     });
     simSegIdx=Math.min(bestSeg,(simForward?ROUTE:ROUTE_REV).length-2);
     simSegProgress=0;
-    simStep();simTimer=setInterval(simStep,3e3);
+    simStep();simTimer=setInterval(simStep,1e3);
   }else{
     clearInterval(simTimer);
     $('connText').textContent='手动停止';
@@ -996,7 +1001,7 @@ function simStep(){
 
   // === 位置计算 ===
   const segLen=Math.hypot((lat1-lat0)*111320,(lng1-lng0)*111320*Math.cos((lat0+lat1)/2*Math.PI/180));
-  const step=Math.max(.001,simSpd*3/3.6/segLen);
+  const step=Math.max(.0003,simSpd*1/3.6/segLen);
   simSegProgress+=step;
 
   if(simSegProgress>=1){
@@ -1006,8 +1011,12 @@ function simStep(){
     return simStep();
   }
 
-  simLat=lerp(lat0,lat1,simSegProgress);
-  simLng=lerp(lng0,lng1,simSegProgress);
+  // Catmull-Rom 样条：4 控制点平滑曲线
+  const route=simForward?ROUTE:ROUTE_REV;
+  const i0=Math.max(0,simSegIdx-1);
+  const i3=Math.min(segs,simSegIdx+2);
+  simLat=catmullRom(route[i0][0],lat0,lat1,route[i3][0],simSegProgress);
+  simLng=catmullRom(route[i0][1],lng0,lng1,route[i3][1],simSegProgress);
 
   // === GPS 抖动（城市大、高速小） ===
   const jitter=limit<=50?.00018:.00008;  // ±20m 城市 / ±9m 高速
