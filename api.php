@@ -23,6 +23,29 @@ require_once __DIR__ . '/config.php';
 try {
     $db = getDB();
 
+    // 逆地理编码代理（前端免 Key）
+    if (($_GET['geo'] ?? '') === '1') {
+        $lat = $_GET['lat'] ?? 0;
+        $lng = $_GET['lng'] ?? 0;
+        $url = "https://nominatim.openstreetmap.org/reverse?format=json&lat={$lat}&lon={$lng}&zoom=18&accept-language=zh";
+        $ctx = stream_context_create(['http'=>['timeout'=>5,'header'=>"User-Agent: ESP32-GPS/1.0\r\n"]]);
+        $resp = @file_get_contents($url, false, $ctx);
+        if ($resp) {
+            $data = json_decode($resp, true);
+            $addr = $data['address'] ?? [];
+            echo json_encode([
+                'status'=>'ok',
+                'road'=>$addr['road']??($addr['pedestrian']??''),
+                'number'=>$addr['house_number']??'',
+                'district'=>$addr['suburb']??($addr['district']??''),
+                'display'=>$data['display_name']??''
+            ], JSON_UNESCAPED_UNICODE);
+        } else {
+            echo json_encode(['status'=>'error','message'=>'API fail']);
+        }
+        exit;
+    }
+
     // 最新一条：秒开缓存用
     if (($_GET['latest'] ?? '') === '1') {
         $stmt = $db->query('SELECT recorded_at AS ts, temperature AS temp, humidity AS hum, rssi, lat, lng, alt, spd, sat, fix FROM sensor_data ORDER BY id DESC LIMIT 1');

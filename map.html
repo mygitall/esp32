@@ -361,15 +361,14 @@ let lastGeoLat=0,lastGeoLng=0;
 function reverseGeocode(lat,lng){
   if(Math.abs(lat-lastGeoLat)<5e-4&&Math.abs(lng-lastGeoLng)<5e-4)return;
   lastGeoLat=lat;lastGeoLng=lng;
-  fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat='+lat+'&lon='+lng+'&zoom=18&accept-language=zh')
+  fetch(API_BASE+'?geo=1&lat='+lat+'&lng='+lng)
     .then(r=>r.json()).then(d=>{
-      if(d&&d.address){
-        const a=d.address,road=a.road||a.pedestrian||a.path||'',num=a.house_number||'';
-        const sub=a.suburb||a.district||'';
+      if(d.status==='ok'){
+        const road=d.road||'',num=d.number||'',sub=d.district||'';
         const addr=(sub?sub+' · ':'')+road+(num||'');
-        gpsMarker.setTooltipContent(addr||d.display_name);
-        $('addr').textContent=addr||d.display_name;
-        $('roadName').textContent='📍 '+(road+(num||'')||d.display_name||'--');
+        gpsMarker.setTooltipContent(addr||d.display||'');
+        $('addr').textContent=addr||d.display||'';
+        $('roadName').textContent='📍 '+(road+(num||'')||d.display||'--');
       }
     }).catch(()=>{});
 }
