@@ -23,25 +23,44 @@ require_once __DIR__ . '/config.php';
 try {
     $db = getDB();
 
-    // 逆地理编码代理（前端免 Key）
+    // 逆地理编码代理（带本地缓存，50m 范围内 24h 复用）
     if (($_GET['geo'] ?? '') === '1') {
         $lat = $_GET['lat'] ?? 0;
         $lng = $_GET['lng'] ?? 0;
+        // 缓存键：坐标四舍五入到小数点后 3 位（~110m 网格）
+        $cacheKey = round($lat,3) . ',' . round($lng,3);
+        $cacheDir = __DIR__ . '/cache';
+        $cacheFile = $cacheDir . '/' . md5($cacheKey) . '.json';
+        if (!is_dir($cacheDir)) mkdir($cacheDir, 0755, true);
+
+        // 缓存命中且未过期（24 小时）
+        if (file_exists($cacheFile) && (time() - filemtime($cacheFile)) < 86400) {
+            echo file_get_contents($cacheFile);
+            exit;
+        }
+
         $url = "https://nominatim.openstreetmap.org/reverse?format=json&lat={$lat}&lon={$lng}&zoom=18&accept-language=zh";
         $ctx = stream_context_create(['http'=>['timeout'=>5,'header'=>"User-Agent: ESP32-GPS/1.0\r\n"]]);
         $resp = @file_get_contents($url, false, $ctx);
         if ($resp) {
             $data = json_decode($resp, true);
             $addr = $data['address'] ?? [];
-            echo json_encode([
+            $out = json_encode([
                 'status'=>'ok',
                 'road'=>$addr['road']??($addr['pedestrian']??''),
                 'number'=>$addr['house_number']??'',
                 'district'=>$addr['suburb']??($addr['district']??''),
                 'display'=>$data['display_name']??''
             ], JSON_UNESCAPED_UNICODE);
+            file_put_contents($cacheFile, $out);
+            echo $out;
         } else {
-            echo json_encode(['status'=>'error','message'=>'API fail']);
+            // Nominatim 失败时读过期缓存兜底
+            if (file_exists($cacheFile)) {
+                echo file_get_contents($cacheFile);
+            } else {
+                echo json_encode(['status'=>'error','message'=>'API fail']);
+            }
         }
         exit;
     }
