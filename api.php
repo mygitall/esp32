@@ -25,7 +25,7 @@ try {
 
     // 最新一条：秒开缓存用
     if (($_GET['latest'] ?? '') === '1') {
-        $stmt = $db->query('SELECT recorded_at AS ts, temperature AS temp, humidity AS hum, rssi FROM sensor_data ORDER BY id DESC LIMIT 1');
+        $stmt = $db->query('SELECT recorded_at AS ts, temperature AS temp, humidity AS hum, rssi, lat, lng, alt, spd, sat, fix FROM sensor_data ORDER BY id DESC LIMIT 1');
         $row = $stmt->fetch();
         echo json_encode(['status' => 'ok', 'latest' => $row ?: null], JSON_UNESCAPED_UNICODE);
         exit;
@@ -105,7 +105,7 @@ function queryData(PDO $db, array $params): array {
                 GROUP BY ts ORDER BY ts ASC";
     } else {
         // points: 返回所有原始点
-        $sql = "SELECT recorded_at AS ts, temperature AS temp, humidity AS hum, rssi
+        $sql = "SELECT recorded_at AS ts, temperature AS temp, humidity AS hum, rssi, lat, lng, alt, spd, sat, fix
                 FROM sensor_data
                 WHERE recorded_at BETWEEN :from AND :to
                 ORDER BY recorded_at ASC";
