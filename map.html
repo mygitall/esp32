@@ -356,27 +356,23 @@ function updateMileage(){
   $('mileage').textContent='📏 行驶里程: '+totalMileage.toFixed(2)+' km';
 }
 
-// ============= 逆地理编码 =============
-const AMAP_KEY='971a6c461c7c46e28b04ff621ac62a61';
-let lastGeoLat=0,lastGeoLng=0,lastAcc=0;
+// 逆地理编码（Nominatim 免费，无需 Key）
+let lastGeoLat=0,lastGeoLng=0;
 function reverseGeocode(lat,lng){
   if(Math.abs(lat-lastGeoLat)<5e-4&&Math.abs(lng-lastGeoLng)<5e-4)return;
   lastGeoLat=lat;lastGeoLng=lng;
-  fetch('https://restapi.amap.com/v3/geocode/regeo?key='+AMAP_KEY+'&location='+lng+','+lat+'&extensions=base&output=json')
+  fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat='+lat+'&lon='+lng+'&zoom=18&accept-language=zh')
     .then(r=>r.json()).then(d=>{
-      if(d.status==='1'&&d.regeocode){
-        const c=d.regeocode.addressComponent||{};
-        const dis=c.district?c.district+' · ':'';
-        const st=(c.streetNumber||{}).street||'';
-        const nb=(c.streetNumber||{}).number||'';
-        const addr=(dis+st+(nb||'附近')).trim()||d.regeocode.formatted_address||'';
-        gpsMarker.setTooltipContent(addr);
-        $('addr').textContent=addr;
-        $('roadName').textContent='📍 '+(st+(nb||'')||d.regeocode.formatted_address||'定位中...');
+      if(d&&d.address){
+        const a=d.address,road=a.road||a.pedestrian||a.path||'',num=a.house_number||'';
+        const sub=a.suburb||a.district||'';
+        const addr=(sub?sub+' · ':'')+road+(num||'');
+        gpsMarker.setTooltipContent(addr||d.display_name);
+        $('addr').textContent=addr||d.display_name;
+        $('roadName').textContent='📍 '+(road+(num||'')||d.display_name||'--');
       }
     }).catch(()=>{});
 }
-
 // ============= 跟随模式 =============
 let followMode=!1;
 function toggleFollow(){
