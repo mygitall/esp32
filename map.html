@@ -164,6 +164,7 @@
     <div class="mileage" id="mileage">📏 今日里程: 0.00 km</div>
     <div class="info-item" style="margin-top:6px">📍 精度 ±<span id="acc">--</span>m</div>
     <div class="info-item">🔔 围栏 <span id="fence">--</span></div>
+    <div class="info-item" style="grid-column:1/-1">📍 <span id="addr">定位中...</span></div>
   </div>
 </div>
 
@@ -367,7 +368,9 @@ function reverseGeocode(lat,lng){
         const dis=c.district?c.district+' · ':'';
         const st=(c.streetNumber||{}).street||'';
         const nb=(c.streetNumber||{}).number||'';
-        gpsMarker.setTooltipContent((dis+st+(nb||'附近')).trim()||d.regeocode.formatted_address||'');
+        const addr=(dis+st+(nb||'附近')).trim()||d.regeocode.formatted_address||'';
+        gpsMarker.setTooltipContent(addr);
+        $('addr').textContent=addr;
       }
     }).catch(()=>{});
 }
