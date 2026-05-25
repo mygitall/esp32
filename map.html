@@ -154,6 +154,7 @@
     <div class="info-coords" id="coords">等待 GPS 数据...</div>
     <span class="expand-icon">▲</span>
   </div>
+  <div style="font-size:.75rem;color:var(--text2);padding:2px 0" id="roadName">--</div>
   <div class="info-grid">
     <div class="info-item">📡 卫星 <span id="sat">--</span></div>
     <div class="info-item">⚡ 海拔 <span id="alt">--</span>m</div>
@@ -371,6 +372,7 @@ function reverseGeocode(lat,lng){
         const addr=(dis+st+(nb||'附近')).trim()||d.regeocode.formatted_address||'';
         gpsMarker.setTooltipContent(addr);
         $('addr').textContent=addr;
+        $('roadName').textContent='📍 '+(st+(nb||'')||d.regeocode.formatted_address||'定位中...');
       }
     }).catch(()=>{});
 }
