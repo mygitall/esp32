@@ -364,11 +364,15 @@ function reverseGeocode(lat,lng){
   fetch(API_BASE+'?geo=1&lat='+lat+'&lng='+lng)
     .then(r=>r.json()).then(d=>{
       if(d.status==='ok'){
-        const road=d.road||'',num=d.number||'',sub=d.district||'';
-        const addr=(sub?sub+' · ':'')+road+(num||'');
-        gpsMarker.setTooltipContent(addr||d.display||'');
-        $('addr').textContent=addr||d.display||'';
-        $('roadName').textContent='📍 '+(road+(num||'')||d.display||'--');
+        const road=d.road||'',num=d.number||'',district=d.district||'';
+        const city=d.city||'',state=d.state||'';
+        // 上海市浦东新区 · 某某路99号
+        const prefix=[state,city,district].filter(Boolean).join('');
+        const fullAddr=prefix+(prefix?' · ':'')+road+(num||'');
+        const shortName=(district||city||'')+(district||city?' · ':'')+road+(num||'');
+        gpsMarker.setTooltipContent(fullAddr||d.display||'');
+        $('addr').textContent=fullAddr||d.display||'';
+        $('roadName').textContent='📍 '+(shortName||d.display||'--');
       }
     }).catch(()=>{});
 }

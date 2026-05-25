@@ -50,6 +50,8 @@ try {
                 'road'=>$addr['road']??($addr['pedestrian']??''),
                 'number'=>$addr['house_number']??'',
                 'district'=>$addr['suburb']??($addr['district']??''),
+                'city'=>$addr['city']??($addr['town']??''),
+                'state'=>$addr['state']??($addr['province']??''),
                 'display'=>$data['display_name']??''
             ], JSON_UNESCAPED_UNICODE);
             file_put_contents($cacheFile, $out);
