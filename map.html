@@ -195,6 +195,17 @@ client.on('offline',()=>{
 });
 setInterval(updateRelativeTime,1e4);
 
+// HTTP 轮询 API（国内直连，MQTT 不通时也能用）
+const API_BASE='https://www.sseeee.com/esp32/mmq/api.php';
+function httpPoll(){
+  fetch(API_BASE+'?latest=1').then(r=>r.json()).then(d=>{
+    if(d.status==='ok'&&d.latest&&d.latest.lat&&d.latest.lng&&d.latest.fix>0){
+      updateDisplay(d.latest);
+    }
+  }).catch(()=>{});
+}
+setInterval(httpPoll,5e3);httpPoll();
+
 // ============= Leaflet 地图 =============
 // 从缓存恢复上次位置
 let cachedPos=[31.23,121.47];
