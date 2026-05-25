@@ -112,6 +112,7 @@
 
 <div class="topbar">
   <div class="title">GPS 定位，张伟伟</div>
+  <div class="conn-badge" id="gpsWarning" style="display:none;background:rgba(255,71,87,.15);border-color:rgba(255,71,87,.4);color:#ff4757;font-size:.7rem;padding:4px 10px;border-radius:8px;position:absolute;top:50px;left:16px;right:16px;text-align:center">📡 GPS 信号丢失 — 显示最后已知位置</div>
   <div class="conn-badge">
     <div class="conn-dot" id="connDot"></div>
     <span id="connText">连接中</span>
@@ -3277,7 +3278,9 @@ function updateDisplay(d){
   updateRelativeTime();
 
   $('coords').textContent=lng.toFixed(6)+', '+lat.toFixed(6);
-  $('sat').textContent=d.sat||'--';
+  const sat=d.sat||0;
+  $('sat').textContent=sat||'--';
+  $('gpsWarning').style.display=sat>0?'none':'block';
   $('alt').textContent=(d.alt||0).toFixed(1);
   $('spd').textContent=(d.spd||0).toFixed(1);
   $('acc').textContent=lastAcc||'--';
