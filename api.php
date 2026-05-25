@@ -45,14 +45,29 @@ try {
         if ($resp) {
             $data = json_decode($resp, true);
             $addr = $data['address'] ?? [];
+            $road = $addr['road']??($addr['pedestrian']??($addr['path']??''));
+            $num = $addr['house_number']??'';
+            $district = $addr['district']??($addr['suburb']??($addr['county']??($addr['state_district']??'')));
+            $city = $addr['city']??($addr['town']??($addr['village']??''));
+            $state = $addr['state']??($addr['province']??($addr['region']??''));
+            $display = $data['display_name']??'';
+
+            // display_name 兜底解析：例如 "严木桥路, 万祥镇, 浦东新区, 上海市, 中国"
+            if(!$district||!$city||!$state){
+                $parts = array_map('trim', explode(',', $display));
+                // parts: [路, 镇/街道, 区县, 市, 省/国]
+                $c = count($parts);
+                if(!$district && $c>=3) $district = $parts[$c-3]; // 区县
+                if(!$city && $c>=3) $city = $parts[$c-3]??''; // 可能和 district 重叠，取更上级
+                if(!$city && $c>=4) $city = $parts[$c-4];
+                if(!$state && $c>=4) $state = end($parts) === '中国' ? $parts[$c-2] : ($parts[$c-1]??'');
+            }
+
             $out = json_encode([
                 'status'=>'ok',
-                'road'=>$addr['road']??($addr['pedestrian']??''),
-                'number'=>$addr['house_number']??'',
-                'district'=>$addr['suburb']??($addr['district']??''),
-                'city'=>$addr['city']??($addr['town']??''),
-                'state'=>$addr['state']??($addr['province']??''),
-                'display'=>$data['display_name']??''
+                'road'=>$road, 'number'=>$num,
+                'district'=>$district, 'city'=>$city, 'state'=>$state,
+                'display'=>$display
             ], JSON_UNESCAPED_UNICODE);
             file_put_contents($cacheFile, $out);
             echo $out;
