@@ -16,17 +16,17 @@
   *{margin:0;padding:0;box-sizing:border-box}
 
   :root{
-    --bg:#0b0e14;--surface:#141820;--surface2:#1a1f2b;
-    --border:#252a35;--text:#e2e4e9;--text2:#8b8f9a;--text3:#5a5e6a;
-    --green:#00d4aa;--red:#ff4757;--accent:#4f8fff;
-    --panel-bg:rgba(20,24,32,0.9);--btn-bg:rgba(20,24,32,0.9);
-    --title-from:#e2e4e9;--title-to:#8b8f9a;
-  }
-  body.light{
     --bg:#f5f5f5;--surface:#fff;--surface2:#f0f0f0;
     --border:#ddd;--text:#333;--text2:#666;--text3:#999;
+    --green:#00d4aa;--red:#ff4757;--accent:#4f8fff;
     --panel-bg:rgba(255,255,255,0.9);--btn-bg:rgba(255,255,255,0.9);
     --title-from:#333;--title-to:#666;
+  }
+  body.dark{
+    --bg:#0b0e14;--surface:#141820;--surface2:#1a1f2b;
+    --border:#252a35;--text:#e2e4e9;--text2:#8b8f9a;--text3:#5a5e6a;
+    --panel-bg:rgba(20,24,32,0.9);--btn-bg:rgba(20,24,32,0.9);
+    --title-from:#e2e4e9;--title-to:#8b8f9a;
   }
   body{font-family:-apple-system,'SF Pro Display',sans-serif;background:var(--bg);color:var(--text);height:100vh;overflow:hidden;touch-action:manipulation;-webkit-text-size-adjust:100%}
 
@@ -235,30 +235,24 @@ $('themeBtn').textContent='☀️';
 document.querySelector('meta[name="theme-color"]').content='#f5f5f5';
 
 // ============= 日出/日落动态配色 =============
-// 用户手动切换主题时禁用自动配色
-let autoThemeEnabled=!localStorage.getItem('map_theme');
 function toggleTheme(){
-  autoThemeEnabled=!1;
-  clearInterval(autoThemeTimer);
-  if(document.body.classList.toggle('light')){
-    leafMap.removeLayer(darkTiles);lightTiles.addTo(leafMap);
-    $('themeBtn').textContent='☀️';
-    document.querySelector('meta[name="theme-color"]').content='#f5f5f5';
-    localStorage.setItem('map_theme','light');
-  }else{
+  if(document.body.classList.toggle('dark')){
     leafMap.removeLayer(lightTiles);darkTiles.addTo(leafMap);
-    $('themeBtn').textContent='🌙';
+    $('themeBtn').textContent='☀️';
     document.querySelector('meta[name="theme-color"]').content='#0b0e14';
     localStorage.setItem('map_theme','dark');
+  }else{
+    leafMap.removeLayer(darkTiles);lightTiles.addTo(leafMap);
+    $('themeBtn').textContent='🌙';
+    document.querySelector('meta[name="theme-color"]').content='#f5f5f5';
+    localStorage.setItem('map_theme','light');
   }
 }
-// 从本地存储恢复主题
 if(localStorage.getItem('map_theme')==='dark'){
-  document.body.classList.remove('light');
+  document.body.classList.add('dark');
   leafMap.removeLayer(lightTiles);darkTiles.addTo(leafMap);
-  $('themeBtn').textContent='🌙';
+  $('themeBtn').textContent='☀️';
   document.querySelector('meta[name="theme-color"]').content='#0b0e14';
-  autoThemeEnabled=!1;
 }
 
 // 日出/日落计算（基于 SPA 算法）
@@ -300,9 +294,9 @@ function applyAutoTheme(){
   else period=PERIODS[3];                              // 黄昏
 
   const isLight=period.name==='day'||period.name==='dawn'||period.name==='dusk';
-  const wasLight=document.body.classList.contains('light');
+  const wasLight=document.body.classList.contains('dark');
   if(isLight!==wasLight){
-    document.body.classList.toggle('light',isLight);
+    document.body.classList.toggle('dark',!isLight);
     [darkTiles,lightTiles].forEach(l=>leafMap.hasLayer(l)&&leafMap.removeLayer(l));
     period.tile.addTo(leafMap);
     $('themeBtn').textContent=period.btn;
