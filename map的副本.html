@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b0e14">
+<title>ESP32 GPS 定位</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  :root {
+    --bg:#0b0e14; --surface:#141820; --surface2:#1a1f2b;
+    --border:#252a35; --text:#e2e4e9; --text2:#8b8f9a; --text3:#5a5e6a;
+    --green:#00d4aa; --red:#ff4757; --accent:#4f8fff;
+    --panel-bg:rgba(20,24,32,0.92);
+    --btn-bg:rgba(20,24,32,0.9);
+    --title-from:#e2e4e9; --title-to:#8b8f9a;
+  }
+
+  body.light {
+    --bg:#f5f5f5; --surface:#fff; --surface2:#f0f0f0;
+    --border:#ddd; --text:#333; --text2:#666; --text3:#999;
+    --panel-bg:rgba(255,255,255,0.92);
+    --btn-bg:rgba(255,255,255,0.9);
+    --title-from:#333; --title-to:#666;
+  }
+
+  body {
+    font-family: -apple-system, 'SF Pro Display', 'Segoe UI', sans-serif;
+    background: var(--bg); color: var(--text);
+    height: 100vh; overflow: hidden;
+    touch-action: manipulation; -webkit-text-size-adjust: 100%;
+  }
+
+  /* 全屏地图 */
+  #map {
+    width: 100%; height: 100%;
+    background: var(--surface);
+  }
+
+  /* 顶部状态栏 */
+  .topbar {
+    position: absolute; top:0; left:0; right:0; z-index: 1000;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px;
+    pointer-events: none;
+  }
+  .topbar > * { pointer-events: auto; }
+
+  .title {
+    font-size: 1.1rem; font-weight: 700; letter-spacing: -0.3px;
+    background: linear-gradient(135deg, var(--title-from), var(--title-to));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+
+  .conn-badge {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--panel-bg); backdrop-filter: blur(10px);
+    border: 1px solid var(--border);
+    border-radius: 100px; padding: 6px 14px;
+    font-size: 0.7rem; color: var(--text2);
+  }
+  .conn-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--red); transition: background 0.4s;
+  }
+  .conn-dot.live { background: var(--green); box-shadow: 0 0 8px rgba(0,212,170,0.4); }
+
+  /* 底部信息栏 */
+  .infobar {
+    position: absolute; bottom: 20px; left: 16px; right: 16px; z-index: 1000;
+    background: var(--panel-bg); backdrop-filter: blur(12px);
+    border: 1px solid var(--border); border-radius: 16px;
+    padding: 14px 18px;
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 6px 16px;
+    pointer-events: none;
+  }
+  .info-item { font-size: 0.8rem; color: var(--text2); }
+  .info-item span { color: var(--text); font-weight: 600; }
+  .info-coords {
+    grid-column: 1 / -1;
+    font-size: 0.85rem; color: var(--text);
+    font-weight: 600; font-variant-numeric: tabular-nums;
+  }
+
+  /* 缩放按钮 */
+  .zoom-ctrl {
+    position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
+    z-index: 1000; display: flex; flex-direction: column; gap: 6px;
+  }
+  .zoom-ctrl button {
+    width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--border);
+    background: var(--btn-bg); backdrop-filter: blur(10px);
+    color: var(--text); font-size: 1.3rem; cursor: pointer;
+    transition: background 0.2s;
+  }
+  .zoom-ctrl button:active { background: rgba(79,143,255,0.2); }
+
+  /* 定位按钮 */
+  .locate-btn {
+    position: absolute; right: 16px; bottom: 140px; z-index: 1000;
+    width: 40px; height: 40px; border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--btn-bg); backdrop-filter: blur(10px);
+    color: var(--text); font-size: 1.2rem; cursor: pointer;
+    transition: background 0.2s;
+  }
+  .locate-btn:active { background: rgba(79,143,255,0.2); }
+
+  /* 主题切换按钮 */
+  .theme-btn {
+    position: absolute; right: 16px; bottom: 190px; z-index: 1000;
+    width: 40px; height: 40px; border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--btn-bg); backdrop-filter: blur(10px);
+    color: var(--text); font-size: 1.2rem; cursor: pointer;
+    transition: background 0.2s;
+  }
+  .theme-btn:active { background: rgba(79,143,255,0.2); }
+
+  /* 响应式 */
+  @media (min-width: 768px) {
+    .infobar { left: 50%; right: auto; transform: translateX(-50%); min-width: 500px; }
+    .title { font-size: 1.3rem; }
+    .topbar { padding: 16px 24px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div class="topbar">
+  <div class="title">GPS 定位，张伟伟</div>
+  <div class="conn-badge">
+    <div class="conn-dot" id="connDot"></div>
+    <span id="connText">连接中</span>
+  </div>
+</div>
+
+<div class="zoom-ctrl">
+  <button onclick="zoomIn()" title="放大">+</button>
+  <button onclick="zoomOut()" title="缩小">−</button>
+</div>
+
+<button class="locate-btn" onclick="centerOnMarker()" title="定位设备">📍</button>
+<button class="theme-btn" onclick="toggleTheme()" title="切换深/浅色" id="themeBtn">🌙</button>
+
+<div class="infobar" id="infobar">
+  <div class="info-coords" id="coords">等待 GPS 数据...</div>
+  <div class="info-item">📡 卫星 <span id="sat">--</span></div>
+  <div class="info-item">⚡ 海拔 <span id="alt">--</span>m</div>
+  <div class="info-item">🏃 速度 <span id="spd">--</span>km/h</div>
+  <div class="info-item">🕐 更新 <span id="ts">--</span></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+// ========== MQTT ==========
+const broker = 'wss://broker.emqx.io:8084/mqtt';
+const client = mqtt.connect(broker, {
+  clientId: 'map_' + Math.random().toString(16).slice(2, 10),
+  clean: true, connectTimeout: 10000, reconnectPeriod: 3000
+});
+
+client.on('connect', () => {
+  $('connDot').classList.add('live');
+  $('connText').textContent = '已连接';
+  client.subscribe('esp32/gps');
+});
+
+client.on('reconnect', () => {
+  $('connDot').classList.remove('live');
+  $('connText').textContent = '重连中';
+});
+
+client.on('offline', () => {
+  $('connDot').classList.remove('live');
+  $('connText').textContent = '已断开';
+});
+
+// ========== Leaflet 地图 ==========
+const leafMap = L.map('map', {
+  center: [31.23, 121.47], zoom: 15,
+  attributionControl: false,
+  zoomControl: false
+});
+
+// 双主题地图底图
+const darkTiles = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 });
+const lightTiles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 });
+darkTiles.addTo(leafMap);  // 临时占位
+// 默认浅色模式
+document.body.classList.add('light');
+leafMap.removeLayer(darkTiles);
+lightTiles.addTo(leafMap);
+$('themeBtn').textContent = '☀️';
+document.querySelector('meta[name="theme-color"]').content = '#f5f5f5';
+
+function toggleTheme() {
+  const isLight = document.body.classList.toggle('light');
+  if (isLight) {
+    leafMap.removeLayer(darkTiles);
+    lightTiles.addTo(leafMap);
+    $('themeBtn').textContent = '☀️';
+    document.querySelector('meta[name="theme-color"]').content = '#f5f5f5';
+    localStorage.setItem('map_theme', 'light');
+  } else {
+    leafMap.removeLayer(lightTiles);
+    darkTiles.addTo(leafMap);
+    $('themeBtn').textContent = '🌙';
+    document.querySelector('meta[name="theme-color"]').content = '#0b0e14';
+    localStorage.setItem('map_theme', 'dark');
+  }
+}
+
+// 恢复主题偏好
+(function() {
+  if (localStorage.getItem('map_theme') === 'light') {
+    document.body.classList.add('light');
+    leafMap.removeLayer(darkTiles);
+    lightTiles.addTo(leafMap);
+    $('themeBtn').textContent = '☀️';
+    document.querySelector('meta[name="theme-color"]').content = '#f5f5f5';
+  }
+})();
+
+// 小车图标（SVG）
+const carIcon = L.divIcon({
+  html: '<div style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;font-size:28px;filter:drop-shadow(2px 2px 3px rgba(0,0,0,0.5));">🚗</div>',
+  iconSize: [36, 36],
+  iconAnchor: [18, 18],
+  className: ''
+});
+
+const gpsMarker = L.marker([31.23, 121.47], { icon: carIcon }).addTo(leafMap);
+
+// 精度圈
+const accuracyCircle = L.circle([31.23, 121.47], {
+  radius: 100, color: '#4f8fff', weight: 1,
+  opacity: 0.5, fillOpacity: 0.1
+}).addTo(leafMap);
+
+// 轨迹线
+let trackLine = L.polyline([], {
+  color: '#4f8fff', weight: 2, opacity: 0.6
+}).addTo(leafMap);
+let trackPoints = [];
+
+// 首次自动 resize
+setTimeout(() => leafMap.invalidateSize(), 300);
+window.addEventListener('resize', () => leafMap.invalidateSize());
+
+// ========== 缩放控制 ==========
+function zoomIn()  { leafMap.zoomIn(); }
+function zoomOut() { leafMap.zoomOut(); }
+function centerOnMarker() {
+  const pos = gpsMarker.getLatLng();
+  leafMap.setView(pos, 16);
+}
+
+// ========== 数据更新 ==========
+client.on('message', (topic, payload) => {
+  try {
+    const d = JSON.parse(payload.toString());
+    if (d.fix > 0 && d.lat && d.lng && (d.lat !== 0 || d.lng !== 0)) {
+      updateDisplay(d);
+    }
+  } catch(e) {}
+});
+
+function updateDisplay(d) {
+  const lat = Number(d.lat), lng = Number(d.lng);
+
+  // 移动标记
+  gpsMarker.setLatLng([lat, lng]);
+  accuracyCircle.setLatLng([lat, lng]);
+
+  // 轨迹
+  trackPoints.push([lat, lng]);
+  if (trackPoints.length > 500) trackPoints.shift();
+  trackLine.setLatLngs(trackPoints);
+
+  // 只跟踪定位（不抢用户视角）
+  if (d.sat > 0) {
+    leafMap.setView([lat, lng], leafMap.getZoom(), { animate: true });
+  }
+
+  // 更新信息栏
+  $('coords').textContent = lng.toFixed(6) + ', ' + lat.toFixed(6);
+  $('sat').textContent = d.sat || '--';
+  $('alt').textContent = (d.alt || 0).toFixed(1);
+  $('spd').textContent = (d.spd || 0).toFixed(1);
+  $('ts').textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+}
+
+// ========== 触摸缩放 ==========
+document.addEventListener('gesturestart', e => e.preventDefault(), { passive: false });
+document.addEventListener('gesturechange', e => e.preventDefault(), { passive: false });
+document.addEventListener('gestureend', e => e.preventDefault(), { passive: false });
+</script>
+</body>
+</html>
