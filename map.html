@@ -195,6 +195,21 @@ client.on('offline',()=>{
 });
 setInterval(updateRelativeTime,1e4);
 
+// WGS-84 → GCJ-02 坐标转换（国内地图偏移修正）
+function wgs2gcj(lat,lng){
+  const a=6378245.0,ee=0.00669342162296594323;
+  function t(lat,lng){
+    let d=Math.sqrt(lng*lng+lat*lat)+0.00002*Math.sin(lat*Math.PI*3000/180);
+    let r=Math.atan2(lat,lng)+0.000003*Math.cos(lng*Math.PI*3000/180);
+    return[Math.sin(r)*d+0.0065,Math.cos(r)*d+0.006];
+  }
+  if(lng<72.004||lng>137.8347||lat<0.8293||lat>55.8271)return[lat,lng];
+  let p=t(lat-35,lng-105);
+  let dlat=p[0],dlng=p[1];
+  let rad=lat/180*Math.PI,magic=1-ee*Math.sin(rad)*Math.sin(rad);
+  return[lat+dlat*180/(a*(1-ee)/(magic*Math.sqrt(magic))*Math.PI),lng+dlng*180/(a/Math.sqrt(magic)*Math.cos(rad)*Math.PI)];
+}
+
 // HTTP 轮询 API（国内直连，MQTT 不通时也能用）
 const API_BASE='https://www.sseeee.com/esp32/mmq/api.php';
 function httpPoll(){
@@ -3243,11 +3258,13 @@ client.on('message',(topic,payload)=>{
 });
 
 function updateDisplay(d){
-  const lat=Number(d.lat),lng=Number(d.lng);
+  let lat=Number(d.lat),lng=Number(d.lng);
+  // WGS-84 → GCJ-02 坐标修正（高德地图偏移）
+  if(d.fix>0||d.sat>0){const gcj=wgs2gcj(lat,lng);lat=gcj[0];lng=gcj[1];}
   lastUpdate=Date.now();
   lastAcc=d.accuracy||d.acc||0;
 
-  // 缓存位置，下次打开页面直接用
+  // 缓存 GCJ 坐标，下次打开直接用
   if(d.sat>0||d.fix>0)try{localStorage.setItem('gps_last_pos',JSON.stringify({lat,lng,ts:Date.now()}))}catch(e){}
 
   reverseGeocode(lat,lng);
