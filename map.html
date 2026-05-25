@@ -182,7 +182,7 @@ let mqttConnected=!1,lastDataTime=0,lastUpdate=0;
 client.on('connect',()=>{
   mqttConnected=!0;
   $('connDot').classList.add('live');$('connText').textContent='已连接';
-  client.subscribe('esp32/gps');
+  client.subscribe(['esp32/gps','esp32/status']);
   updateRelativeTime();
 });
 client.on('reconnect',()=>{
@@ -196,7 +196,10 @@ client.on('offline',()=>{
 setInterval(updateRelativeTime,1e4);
 
 // ============= Leaflet 地图 =============
-const leafMap=L.map('map',{center:[31.23,121.47],zoom:15,attributionControl:!1,zoomControl:!1});
+// 从缓存恢复上次位置
+let cachedPos=[31.23,121.47];
+try{const c=JSON.parse(localStorage.getItem('gps_last_pos'));if(c&&c.lat)cachedPos=[c.lat,c.lng]}catch(e){}
+const leafMap=L.map('map',{center:cachedPos,zoom:15,attributionControl:!1,zoomControl:!1});
 
 // 高德底图（默认浅色，避免加载暗色再切换的闪烁）
 const darkTiles=L.tileLayer('https://wprd0{s}.is.autonavi.com/appmaptile?x={x}&y={y}&z={z}&lang=zh_cn&size=1&scl=1&style=8',{subdomains:'1234',maxZoom:18});
@@ -288,7 +291,7 @@ setTimeout(applyAutoTheme,500);
 
 // 小车标记
 const carIcon=L.divIcon({html:'<div style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;font-size:28px;filter:drop-shadow(2px 2px 3px rgba(0,0,0,.5))">🚗</div>',iconSize:[36,36],iconAnchor:[18,18],className:''});
-const gpsMarker=L.marker([31.23,121.47],{icon:carIcon}).addTo(leafMap).bindTooltip('定位中...',{direction:'top',offset:[0,-20],className:'addr-tooltip'});
+const gpsMarker=L.marker(cachedPos,{icon:carIcon}).addTo(leafMap).bindTooltip('定位中...',{direction:'top',offset:[0,-20],className:'addr-tooltip'});
 
 // 精度圈
 const accuracyCircle=L.circle([31.23,121.47],{radius:100,color:'#4f8fff',weight:1,opacity:.5,fillOpacity:.1}).addTo(leafMap);
@@ -3233,10 +3236,11 @@ function updateDisplay(d){
   lastUpdate=Date.now();
   lastAcc=d.accuracy||d.acc||0;
 
+  // 缓存位置，下次打开页面直接用
+  if(d.sat>0||d.fix>0)try{localStorage.setItem('gps_last_pos',JSON.stringify({lat,lng,ts:Date.now()}))}catch(e){}
+
   reverseGeocode(lat,lng);
-  // 模拟时有抖动坐标用于显示，真实 MQTT 则 displayLat/lng 不存在
-  const markerLat=d.displayLat||lat,markerLng=d.displayLng||lng;
-  gpsMarker.setLatLng([markerLat,markerLng]);
+  gpsMarker.setLatLng([lat,lng]);
   accuracyCircle.setLatLng([lat,lng]);
 
   if(followMode)leafMap.setView([markerLat,markerLng],leafMap.getZoom(),{animate:!0});
