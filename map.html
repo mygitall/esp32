@@ -370,6 +370,7 @@ const PERIODS=[
 PERIODS[0].from=0;PERIODS[0].to=0;  // night placeholder
 PERIODS[3].from=0;PERIODS[3].to=0;  // dusk placeholder
 
+let autoThemeEnabled=!1;
 function applyAutoTheme(){
   if(!autoThemeEnabled)return;
   const lat=gpsMarker?gpsMarker.getLatLng().lat:31.23;
@@ -412,10 +413,27 @@ let traveledIdx=0,traveledPath=[],totalMileage=0;
 let gpsHistory=[];
 let refLineShown=!1,lastTrackKey='';
 
+// Catmull-Rom 样条插值 — GPS点之间平滑过渡，避免穿田
+function smoothPath(pts,subdiv){
+  if(pts.length<3||subdiv<2)return pts.map(p=>[p[0],p[1]]);
+  const out=[],n=pts.length;
+  for(let i=0;i<n-1;i++){
+    const p0=pts[Math.max(0,i-1)],p1=pts[i],p2=pts[i+1],p3=pts[Math.min(n-1,i+2)];
+    for(let s=0;s<subdiv;s++){
+      const t=s/subdiv,t2=t*t,t3=t2*t;
+      out.push([0.5*((2*p1[0])+(-p0[0]+p2[0])*t+(2*p0[0]-5*p1[0]+4*p2[0]-p3[0])*t2+(-p0[0]+3*p1[0]-3*p2[0]+p3[0])*t3),
+                0.5*((2*p1[1])+(-p0[1]+p2[1])*t+(2*p0[1]-5*p1[1]+4*p2[1]-p3[1])*t2+(-p0[1]+3*p1[1]-3*p2[1]+p3[1])*t3)]);
+    }
+  }
+  out.push([pts[n-1][0],pts[n-1][1]]);
+  return out;
+}
 function drawTrack(){
   leafMap.eachLayer(l=>{if(l._trackLine)leafMap.removeLayer(l)});
   if(traveledPath.length<2)return;
-  const line=L.polyline(traveledPath.map(p=>[p[0],p[1]]),{color:'#4f8fff',weight:3,opacity:.7});
+  const pts=traveledPath.map(p=>[p[0],p[1]]);
+  const smoothed=pts.length>=3?smoothPath(pts,3):pts;
+  const line=L.polyline(smoothed,{color:'#4f8fff',weight:3,opacity:.7});
   line._trackLine=!0;line.addTo(leafMap);
 }
 
@@ -3278,20 +3296,41 @@ function loadPlayback(){
   pbPause();pbIndex=-1;
   const date=$('pbDate').value||new Date().toISOString().slice(0,10);
   const today=new Date().toISOString().slice(0,10);
-  // 今天优先用本地模拟历史，否则查 PHP API
   if(date===today&&simHistory.length>0){
     pbData=simHistory;
+    traveledPath=simHistory.map(p=>[p.lat,p.lng,p.spd||0]);
+    drawTrack();updateMileage();
     $('pbLabel').textContent=pbData.length+'条(本地) ';pbPlay();
     return;
   }
-  fetch('https://www.sseeee.com/esp32/mmq/api.php?date='+date)
-    .then(r=>r.json()).then(d=>{
+  $('pbLabel').textContent='加载中...';
+  fetch('https://www.sseeee.com/esp32/mmq/api.php?date='+date,{cache:'no-store'})
+    .then(r=>r.json()).then(async d=>{
       if(d.status==='ok'&&d.data.length>0){
-        pbData=d.data.filter(p=>p.lat&&p.lng&&p.lat!==0).map(p=>{
-          const gcj=wgs2gcj(Number(p.lat),Number(p.lng));
-          return {...p,lat:gcj[0],lng:gcj[1]};
-        });
-        $('pbLabel').textContent=pbData.length+'条(云端) ';pbPlay();
+        const raw=d.data.filter(p=>p.lat&&p.lng&&p.lat!==0);
+        if(raw.length<2){$('pbLabel').textContent='无数据';return}
+        // 计算 GPS 数据跨度，>50m 才走 OSRM 路网匹配
+        let minLat=90,maxLat=-90,minLng=180,maxLng=-180;
+        raw.forEach(p=>{const la=Number(p.lat),ln=Number(p.lng);if(la<minLat)minLat=la;if(la>maxLat)maxLat=la;if(ln<minLng)minLng=ln;if(ln>maxLng)maxLng=ln});
+        const span=Math.sqrt(Math.pow((maxLat-minLat)*111320,2)+Math.pow((maxLng-minLng)*111320*Math.cos((minLat+maxLat)/2*Math.PI/180),2));
+        let matched=null;
+        if(span>50){
+          $('pbLabel').textContent='路网匹配...';
+          try{
+            const resp=await fetch('https://www.sseeee.com/esp32/mmq/match_proxy.php',{
+              method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({points:raw}),signal:AbortSignal.timeout(60000)
+            });
+            const j=await resp.json();
+            if(j.status==='ok'&&j.matched&&j.matched.length)matched=j.matched;
+          }catch(e){}
+        }
+        const src=matched||raw;
+        pbData=src.map(p=>{const gcj=wgs2gcj(Number(p.lat),Number(p.lng));return{...p,lat:gcj[0],lng:gcj[1]}});
+        traveledPath=pbData.map(p=>[p.lat,p.lng,p.spd||0]);
+        drawTrack();updateMileage();
+        const label=matched?'路网':'云端';
+        $('pbLabel').textContent=pbData.length+'条('+label+') ';pbPlay();
       }else{
         pbData=[];$('pbLabel').textContent='无数据';
       }
@@ -3301,7 +3340,6 @@ function loadPlayback(){
 function pbPlay(){
   if(!pbData.length||pbRunning)return;
   pbRunning=!0;$('pbPlayBtn').textContent='⏯';
-  if(pbIndex<0){traveledPath=[];traveledIdx=0;totalMileage=0;refLineShown=!1}
   if(pbIndex<0)pbIndex=0;
   const step=()=>{
     if(!pbRunning||pbIndex>=pbData.length){pbPause();return}
@@ -3312,7 +3350,6 @@ function pbPlay(){
     $('sat').textContent=p.sat||'--';updateGpsBars(p.sat||0);$('alt').textContent=(p.alt||0).toFixed(1);
     $('spd').textContent=(p.spd||0).toFixed(1);$('ts').textContent=p.ts||'--';
     reverseGeocode(p.lat,p.lng);
-    traveledPath.push([p.lat,p.lng,p.spd||0]);drawTrack();updateMileage();
     pbIndex++;
     $('pbFill').style.width=(pbIndex/pbData.length*100)+'%';
     $('pbLabel').textContent=pbIndex+'/'+pbData.length;
