@@ -220,7 +220,7 @@ function httpPoll(){
     }
   }).catch(()=>{});
 }
-setInterval(httpPoll,5e3);httpPoll();
+setInterval(httpPoll,5e3);
 
 // ============= Leaflet 地图 =============
 // 从缓存恢复上次位置
@@ -317,26 +317,56 @@ const gpsMarker=L.marker(cachedPos,{icon:carIcon}).addTo(leafMap).bindTooltip('�
 // 精度圈
 const accuracyCircle=L.circle([31.23,121.47],{radius:100,color:'#4f8fff',weight:1,opacity:.5,fillOpacity:.1}).addTo(leafMap);
 
-// 轨迹线 — 用已走过的 ROUTE 点画线，贴合真实路网
+// 轨迹线 — 只使用设备真实 GPS 点；相邻 GPS 点之间按直线连接
 let traveledIdx=0,traveledPath=[],totalMileage=0;
 let gpsHistory=[];
-
-// 全路线参考线（启动时画一次）
-let refLineShown=!1;
-function showRefRoute(){
-  if(refLineShown)return;refLineShown=!0;
-  const pts=ROUTE.map(p=>[p[0],p[1]]);
-  const line=L.polyline(pts,{color:'#00ff88',weight:2,opacity:.5,dashArray:'8,8'});
-  line._trackLine=!0;line.addTo(leafMap);
-}
+let refLineShown=!1,lastTrackKey='';
 
 function drawTrack(){
   leafMap.eachLayer(l=>{if(l._trackLine)leafMap.removeLayer(l)});
-  showRefRoute();  // 绿虚线 = 完整路线
   if(traveledPath.length<2)return;
-  // 直接用 traveledPath 的所有点画折线，线性连接，紧贴道路
   const line=L.polyline(traveledPath.map(p=>[p[0],p[1]]),{color:'#4f8fff',weight:3,opacity:.7});
   line._trackLine=!0;line.addTo(leafMap);
+}
+
+function normalizeGpsPoint(p){
+  const lat=Number(p.lat),lng=Number(p.lng);
+  if(!lat||!lng||lat===0||lng===0||Number(p.fix||0)<=0)return null;
+  const gcj=wgs2gcj(lat,lng);
+  return {lat:gcj[0],lng:gcj[1],spd:Number(p.spd||0),alt:Number(p.alt||0),sat:Number(p.sat||0),ts:p.ts||''};
+}
+
+function appendTrackPoint(p){
+  if(!p)return false;
+  const key=p.ts||`${p.lat.toFixed(7)},${p.lng.toFixed(7)}`;
+  if(key&&key===lastTrackKey)return false;
+  const last=traveledPath[traveledPath.length-1];
+  if(last&&Math.abs(last[0]-p.lat)<1e-7&&Math.abs(last[1]-p.lng)<1e-7)return false;
+  lastTrackKey=key;
+  traveledPath.push([p.lat,p.lng,p.spd]);
+  return true;
+}
+
+function loadTodayTrack(){
+  const date=new Date().toISOString().slice(0,10);
+  fetch(API_BASE+'?date='+date)
+    .then(r=>r.json()).then(d=>{
+      if(d.status!=='ok'||!Array.isArray(d.data))return;
+      const pts=d.data.map(normalizeGpsPoint).filter(Boolean);
+      if(!pts.length)return;
+      traveledPath=pts.map(p=>[p.lat,p.lng,p.spd]);
+      lastTrackKey=pts[pts.length-1].ts||'';
+      drawTrack();updateMileage();
+      const p=pts[pts.length-1];
+      gpsMarker.setLatLng([p.lat,p.lng]);
+      accuracyCircle.setLatLng([p.lat,p.lng]);
+      $('coords').textContent=p.lng.toFixed(6)+', '+p.lat.toFixed(6);
+      $('sat').textContent=p.sat||'--';
+      $('alt').textContent=p.alt.toFixed(1);
+      $('spd').textContent=p.spd.toFixed(1);
+      reverseGeocode(p.lat,p.lng);
+      if(followMode)leafMap.setView([p.lat,p.lng],leafMap.getZoom());
+    }).catch(()=>{});
 }
 
 function updateMileage(){
@@ -3255,8 +3285,9 @@ client.on('message',(topic,payload)=>{
 });
 
 function updateDisplay(d){
-  let lat=Number(d.lat),lng=Number(d.lng);
-  const gcj=wgs2gcj(lat,lng);lat=gcj[0];lng=gcj[1];
+  const p=normalizeGpsPoint(d);
+  if(!p)return;
+  let lat=p.lat,lng=p.lng;
   lastUpdate=Date.now();
   lastAcc=d.accuracy||d.acc||0;
 
@@ -3269,9 +3300,8 @@ function updateDisplay(d){
 
   if(followMode)leafMap.setView([lat,lng],leafMap.getZoom(),{animate:!0});
 
-  // 轨迹用无抖动坐标，紧贴道路
-  traveledPath.push([lat,lng,Number(d.spd||0)]);drawTrack();updateMileage();
-  gpsHistory.push({ts:Date.now(),lat,lng,spd:d.spd||0,alt:d.alt||0,sat:d.sat||0});
+  if(appendTrackPoint(p)){drawTrack();updateMileage()}
+  gpsHistory.push({ts:Date.now(),lat,lng,spd:p.spd,alt:p.alt,sat:p.sat});
   if(gpsHistory.length>1e4)gpsHistory.shift();
 
   checkFence(lat,lng);
@@ -3287,6 +3317,7 @@ function updateDisplay(d){
 }
 
 // ============= 启动 =============
+loadTodayTrack();httpPoll();
 setTimeout(()=>leafMap.invalidateSize(),300);
 window.addEventListener('resize',()=>leafMap.invalidateSize());
 document.addEventListener('gesturestart',e=>e.preventDefault(),{passive:!1});

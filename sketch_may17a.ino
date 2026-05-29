@@ -16,17 +16,25 @@ const char* password = "999999999";
 #define DHT_PIN 14
 #define DHT_TYPE DHT11
 
-// Air780EX GNSS 定位（UART2: GPIO4=RX, GPIO5=TX, 115200, PWRKEY=GPIO13）
+// ATGM336H GPS（UART2: GPIO16=RX2, GPIO17=TX2, 9600）
 #define USE_GPS
-#define GPS_BAUD 115200
-#define GPS_RX 4
-#define GPS_TX 5
-#define GPS_PWRKEY 13
+#define GPS_BAUD 9600
+#define GPS_RX 16
+#define GPS_TX 17
 HardwareSerial gpsSerial(2);
 float gpsLat = 0, gpsLng = 0, gpsAlt = 0, gpsSpd = 0;
 int gpsSat = 0, gpsFix = 0;
-const unsigned long GPS_INTERVAL = 30000; // 每 30 秒发布一次
+const unsigned long GPS_INTERVAL = 5000; // 每 5 秒更新一次 GPS
 unsigned long lastGpsPublish = 0;
+
+// Air780EX 4G 网络（UART1: GPIO4=RX, GPIO5=TX, PWRKEY=GPIO13）
+#define USE_AIR780EX
+#define AIR_BAUD 115200
+#define AIR_RX 4
+#define AIR_TX 5
+#define AIR_PWRKEY 13
+HardwareSerial airSerial(1);
+bool airAtReady = false;
 
 // LED 引脚
 const int LED_PIN = 2;
@@ -50,6 +58,12 @@ const unsigned long MQTT_INTERVAL = 5000;  // 每 5 秒发布一次
 // HTTP POST 上报（存入 PHP 虚拟主机 MySQL）
 const char* HTTP_REPORT_URL = "https://www.sseeee.com/esp32/mmq/receiver.php";
 const char* CMD_POLL_URL = "https://www.sseeee.com/esp32/mmq/cmd_api.php?esp=1";
+
+// Air780EX 4G 上报配置（联通）
+const char* CELLULAR_APN = "UNINET";
+const char* CELLULAR_REPORT_URL = "http://www.sseeee.com/esp32/mmq/receiver.php";
+bool cellularReady = false;
+unsigned long lastCellularSetup = 0;
 
 // PushDeer 推送配置（一个 Key 推送到所有设备）
 const char* PUSHDEER_KEY = "PDU41451T5iKoPmpeiumcfCkvMOYBMnFsN2NGEG7z";
@@ -93,6 +107,10 @@ const int PWM_RESOLUTION = 8;
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 unsigned long lastMqttPublish = 0;
+
+#ifdef USE_GPS
+void readGPS();
+#endif
 
 // ==================== 网页界面（HTML/CSS/JS） ====================
 
@@ -938,6 +956,144 @@ void runLedEffect(String effect) {
 
 // ==================== MQTT 连接与发布 ====================
 
+// ==================== Air780EX 4G HTTP 上报 ====================
+
+#ifdef USE_AIR780EX
+bool probeAir780At(uint32_t baud);
+
+String airRead(unsigned long timeoutMs) {
+  String resp = "";
+  unsigned long until = millis() + timeoutMs;
+  while (millis() < until) {
+    while (airSerial.available()) {
+      resp += (char)airSerial.read();
+    }
+    delay(10);
+  }
+  return resp;
+}
+
+String airReadUntil(unsigned long timeoutMs, String marker1, String marker2 = "", String marker3 = "") {
+  String resp = "";
+  unsigned long until = millis() + timeoutMs;
+  while (millis() < until) {
+    while (airSerial.available()) {
+      resp += (char)airSerial.read();
+      if ((marker1.length() && resp.indexOf(marker1) >= 0) ||
+          (marker2.length() && resp.indexOf(marker2) >= 0) ||
+          (marker3.length() && resp.indexOf(marker3) >= 0) ||
+          resp.indexOf("ERROR") >= 0) {
+        return resp;
+      }
+    }
+    delay(10);
+  }
+  return resp;
+}
+
+String airCommand(String cmd, unsigned long timeoutMs = 1000, String waitFor = "OK") {
+  while (airSerial.available()) airSerial.read();
+  airSerial.print(cmd);
+  airSerial.print("\r\n");
+  String resp = airReadUntil(timeoutMs, waitFor);
+  Serial.print("Air780EX <= ");
+  Serial.println(cmd);
+  Serial.print(resp);
+  return resp;
+}
+
+bool airCommandOk(String cmd, unsigned long timeoutMs = 1000) {
+  String resp = airCommand(cmd, timeoutMs);
+  return resp.indexOf("OK") >= 0;
+}
+
+bool setupCellular() {
+  if (!airAtReady) {
+    airAtReady = probeAir780At(115200) || probeAir780At(9600);
+    if (!airAtReady) {
+      Serial.println("Air780EX 4G 不可用：GPIO4/GPIO5 没收到 AT 响应");
+      return false;
+    }
+  }
+
+  unsigned long now = millis();
+  if (cellularReady) return true;
+  if (lastCellularSetup > 0 && now - lastCellularSetup < 60000) return false;
+  lastCellularSetup = now;
+
+  Serial.println("初始化 Air780EX 4G 网络...");
+  if (!airCommandOk("AT", 1000)) return false;
+
+  String sim = airCommand("AT+CPIN?", 1500);
+  if (sim.indexOf("READY") < 0) {
+    Serial.println("SIM 卡未就绪");
+    return false;
+  }
+
+  airCommand("AT+CGATT?", 2000);
+  airCommandOk("AT+SAPBR=0,1", 3000); // 已激活时可能返回错误，忽略
+  if (!airCommandOk("AT+SAPBR=3,1,\"CONTYPE\",\"GPRS\"", 1500)) return false;
+  if (!airCommandOk(String("AT+SAPBR=3,1,\"APN\",\"") + CELLULAR_APN + "\"", 1500)) return false;
+  if (!airCommandOk("AT+SAPBR=1,1", 10000)) return false;
+
+  String ip = airCommand("AT+SAPBR=2,1", 3000);
+  cellularReady = ip.indexOf("+SAPBR: 1,1") >= 0;
+  Serial.println(cellularReady ? "Air780EX 4G 网络已就绪" : "Air780EX 4G 网络未获取到 IP");
+  return cellularReady;
+}
+
+bool cellularHttpReport(String json) {
+  if (!setupCellular()) return false;
+
+  Serial.println("使用 Air780EX 4G 上报...");
+  airCommand("AT+HTTPTERM", 1000); // 上次未释放时先清理，失败忽略
+  if (!airCommandOk("AT+HTTPINIT", 3000)) {
+    cellularReady = false;
+    return false;
+  }
+  if (!airCommandOk("AT+HTTPPARA=\"CID\",1", 1500)) return false;
+  airCommandOk("AT+HTTPSSL=0", 1500);
+  if (!airCommandOk(String("AT+HTTPPARA=\"URL\",\"") + CELLULAR_REPORT_URL + "\"", 3000)) return false;
+  if (!airCommandOk("AT+HTTPPARA=\"CONTENT\",\"application/json\"", 1500)) return false;
+
+  while (airSerial.available()) airSerial.read();
+  airSerial.print("AT+HTTPDATA=");
+  airSerial.print(json.length());
+  airSerial.print(",10000\r\n");
+  String dataPrompt = airReadUntil(5000, "DOWNLOAD", ">");
+  Serial.print(dataPrompt);
+  if (dataPrompt.indexOf("DOWNLOAD") < 0 && dataPrompt.indexOf(">") < 0) {
+    Serial.println("Air780EX 未进入 HTTPDATA 下载模式");
+    airCommand("AT+HTTPTERM", 1000);
+    return false;
+  }
+
+  airSerial.print(json);
+  String dataResp = airReadUntil(12000, "OK");
+  Serial.print(dataResp);
+  if (dataResp.indexOf("OK") < 0) {
+    airCommand("AT+HTTPTERM", 1000);
+    return false;
+  }
+
+  String action = airCommand("AT+HTTPACTION=1", 15000, "+HTTPACTION:");
+  action += airRead(500);
+  int p = action.indexOf("+HTTPACTION:");
+  bool ok = false;
+  if (p >= 0) {
+    int comma1 = action.indexOf(',', p);
+    int comma2 = action.indexOf(',', comma1 + 1);
+    int status = action.substring(comma1 + 1, comma2).toInt();
+    ok = status >= 200 && status < 300;
+    Serial.printf("Air780EX HTTP 状态: %d\n", status);
+  }
+  airCommand("AT+HTTPREAD", 3000);
+  airCommand("AT+HTTPTERM", 1000);
+  if (!ok) cellularReady = false;
+  return ok;
+}
+#endif
+
 // MQTT 回调：接收远程指令
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String msg;
@@ -962,6 +1118,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 }
 
 void connectMQTT() {
+  if (WiFi.status() != WL_CONNECTED) return;
   if (mqttClient.connected()) return;
 
   Serial.print("正在连接 MQTT Broker...");
@@ -981,6 +1138,19 @@ void connectMQTT() {
 
 // HTTP POST 上报到 PHP 虚拟主机
 void httpReport(String json) {
+  if (WiFi.status() != WL_CONNECTED) {
+#ifdef USE_AIR780EX
+    if (cellularHttpReport(json)) {
+      Serial.println("Air780EX 4G 上报成功");
+    } else {
+      Serial.println("Air780EX 4G 上报失败");
+    }
+#else
+    Serial.println("HTTP 跳过：Wi-Fi 未连接");
+#endif
+    return;
+  }
+
   HTTPClient http;
   http.begin(HTTP_REPORT_URL);
   http.addHeader("Content-Type", "application/json");
@@ -1013,6 +1183,8 @@ String urlEncode(String str) {
 
 // 轮询远程命令（小程序→PHP→ESP32）
 void pollCmd() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
   HTTPClient http;
   http.begin(CMD_POLL_URL);
   int code = http.GET();
@@ -1031,6 +1203,8 @@ void pollCmd() {
 
 // PushDeer 推送
 void wxAlert(float temp, float hum) {
+  if (WiFi.status() != WL_CONNECTED) return;
+
   unsigned long now = millis();
   if (lastWxAlert > 0 && (now - lastWxAlert) < WX_COOLDOWN) return;
   lastWxAlert = now;
@@ -1053,6 +1227,10 @@ void wxAlert(float temp, float hum) {
 }
 
 void publishSensorData() {
+#ifdef USE_GPS
+  readGPS();
+#endif
+
   String json = "{";
 
 #ifdef USE_DHT
@@ -1119,78 +1297,155 @@ void autoMode() {
 #endif
 }
 
-// ==================== Air780EX GNSS 定位 ====================
+// ==================== ATGM336H GPS 定位 ====================
 
 #ifdef USE_GPS
 
-void initGPS() {
-  Serial.println("\n====== Air780EX 开机 ======");
+float nmeaCoordToDecimal(String raw, String hemi) {
+  raw.trim();
+  hemi.trim();
+  if (raw.length() < 4) return 0;
 
-  // PWRKEY 拉低 2 秒开机，然后保持高电平
-  pinMode(GPS_PWRKEY, OUTPUT);
-  digitalWrite(GPS_PWRKEY, LOW);
-  delay(2000);
-  digitalWrite(GPS_PWRKEY, HIGH);
-  Serial.println("PWRKEY 已触发");
+  int dot = raw.indexOf('.');
+  int degLen = (dot > 4) ? dot - 2 : 2;
+  float degrees = raw.substring(0, degLen).toFloat();
+  float minutes = raw.substring(degLen).toFloat();
+  float value = degrees + minutes / 60.0;
+  if (hemi == "S" || hemi == "W") value = -value;
+  return value;
+}
 
-  gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_RX, GPS_TX);
-  delay(2000);
-
-  // 发 AT 确认通信
-  for (int i = 0; i < 3; i++) {
-    gpsSerial.print("AT\r\n");
-    delay(500);
-    String resp = "";
-    while (gpsSerial.available()) resp += (char)gpsSerial.read();
-    if (resp.indexOf("OK") >= 0) {
-      Serial.println("Air780EX AT 通信 OK");
-      break;
+int splitCsv(String data, String fields[], int maxFields) {
+  int count = 0;
+  int start = 0;
+  data.trim();
+  for (int i = 0; i <= data.length() && count < maxFields; i++) {
+    if (i == data.length() || data[i] == ',') {
+      fields[count++] = data.substring(start, i);
+      start = i + 1;
     }
-    if (i == 2) Serial.println("⚠ AT 无响应，检查接线/供电");
+  }
+  return count;
+}
+
+bool parseCgnsinf(String line) {
+  int idx = line.indexOf("+CGNSINF:");
+  if (idx < 0) return false;
+
+  String data = line.substring(idx + 9);
+  data.trim();
+  int end = data.indexOf('\n');
+  if (end >= 0) data = data.substring(0, end);
+
+  String fields[20];
+  int f = splitCsv(data, fields, 20);
+  if (f < 7) return false;
+
+  // Air780EX/Luat CGNSINF:
+  // run_status,fix_status,utc,lat,lng,alt,speed,course,...
+  int fix = fields[1].toInt();
+  float lat = fields[3].toFloat();
+  float lng = fields[4].toFloat();
+  if (fix <= 0 || (lat == 0 && lng == 0)) return false;
+
+  gpsFix = fix;
+  gpsLat = lat;
+  gpsLng = lng;
+  gpsAlt = fields[5].toFloat();
+  gpsSpd = fields[6].toFloat();
+  if (f > 15) gpsSat = fields[15].toInt();
+  else if (f > 14) gpsSat = fields[14].toInt();
+  return true;
+}
+
+bool parseNmeaSentence(String line) {
+  line.trim();
+  if (!line.startsWith("$")) return false;
+
+  int star = line.indexOf('*');
+  if (star > 0) line = line.substring(0, star);
+
+  String fields[20];
+  int f = splitCsv(line, fields, 20);
+  if (f < 2) return false;
+
+  String type = fields[0];
+  if (type.endsWith("GGA") && f >= 10) {
+    int fix = fields[6].toInt();
+    float lat = nmeaCoordToDecimal(fields[2], fields[3]);
+    float lng = nmeaCoordToDecimal(fields[4], fields[5]);
+    if (fix <= 0 || (lat == 0 && lng == 0)) return false;
+
+    gpsFix = fix;
+    gpsLat = lat;
+    gpsLng = lng;
+    gpsSat = fields[7].toInt();
+    gpsAlt = fields[9].toFloat();
+    return true;
   }
 
-  // 开启 GNSS
-  gpsSerial.print("AT+CGNSPWR=1\r\n");
+  if ((type.endsWith("RMC") || type.endsWith("GNRMC")) && f >= 9) {
+    if (fields[2] != "A") return false;
+    float lat = nmeaCoordToDecimal(fields[3], fields[4]);
+    float lng = nmeaCoordToDecimal(fields[5], fields[6]);
+    if (lat == 0 && lng == 0) return false;
+
+    gpsFix = 1;
+    gpsLat = lat;
+    gpsLng = lng;
+    gpsSpd = fields[7].toFloat() * 1.852; // knots -> km/h
+    return true;
+  }
+
+  return false;
+}
+
+bool parseGpsBuffer(String raw) {
+  bool ok = false;
+
+  int start = 0;
+  while (start < raw.length()) {
+    int end = raw.indexOf('\n', start);
+    if (end < 0) end = raw.length();
+    String line = raw.substring(start, end);
+    if (parseNmeaSentence(line)) ok = true;
+    start = end + 1;
+  }
+
+  return ok;
+}
+
+String readGpsSerial(unsigned long durationMs) {
+  String raw = "";
+  unsigned long until = millis() + durationMs;
+  while (millis() < until) {
+    while (gpsSerial.available()) {
+      raw += (char)gpsSerial.read();
+    }
+    delay(10);
+  }
+  return raw;
+}
+
+void initGPS() {
+  Serial.println("\n====== ATGM336H GPS 初始化 ======");
+  gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_RX, GPS_TX);
   delay(500);
-  while (gpsSerial.available()) gpsSerial.read();
-  Serial.println("GNSS 已开启（首次定位约 30s）\n");
+  readGpsSerial(500);
+  Serial.println("GPS NMEA 串口已启动（首次定位可能需要 30-120s）\n");
 }
 
 void wifiLocate();  // 前向声明
 
 void readGPS() {
-  gpsSerial.print("AT+CGNSINF\r\n");
-  delay(300);
+  String raw = readGpsSerial(1200);
 
-  unsigned long t = millis() + 1000;
-  String line = "";
-  while (millis() < t && gpsSerial.available()) {
-    line += (char)gpsSerial.read();
-  }
-
-  int idx = line.indexOf("+CGNSINF:");
-  if (idx < 0) {
+  if (!parseGpsBuffer(raw)) {
     Serial.print("GPS: 无响应 raw=[");
-    Serial.print(line.length() ? line : "(空)");
+    Serial.print(raw.length() ? raw : "(空)");
     Serial.println("]");
     return;
   }
-
-  // 解析: mode,lon,lat,alt,speed,course,utc,HDOP,VDOP,PDOP,...
-  String data = line.substring(idx + 10);
-  String fields[10];
-  int f = 0, last = 0;
-  for (int i = 0; i < data.length() && f < 10; i++) {
-    if (data[i] == ',') { fields[f++] = data.substring(last, i); last = i + 1; }
-  }
-  if (f < 3) return;
-
-  gpsFix = fields[0].toInt();
-  gpsLng = fields[1].toFloat();
-  gpsLat = fields[2].toFloat();
-  gpsAlt = fields[3].toFloat();
-  gpsSpd = fields[4].toFloat();
-  gpsSat = fields[7].toInt();
 
   // GPS 坐标为空时用 WiFi 定位补充
   if (gpsLat == 0 && gpsLng == 0) {
@@ -1225,6 +1480,42 @@ void wifiLocate() {
   http.end();
 }
 
+#endif
+
+// ==================== Air780EX 初始化 ====================
+
+#ifdef USE_AIR780EX
+bool probeAir780At(uint32_t baud) {
+  airSerial.updateBaudRate(baud);
+  delay(300);
+  airRead(300);
+  for (int i = 0; i < 3; i++) {
+    airSerial.print("AT\r\n");
+    String resp = airRead(700);
+    if (resp.indexOf("OK") >= 0) {
+      Serial.print("Air780EX AT 通信 OK, baud=");
+      Serial.println(baud);
+      return true;
+    }
+  }
+  return false;
+}
+
+void initAir780EX() {
+  Serial.println("\n====== Air780EX 4G 初始化 ======");
+  pinMode(AIR_PWRKEY, OUTPUT);
+  digitalWrite(AIR_PWRKEY, LOW);
+  delay(2000);
+  digitalWrite(AIR_PWRKEY, HIGH);
+  Serial.println("Air780EX PWRKEY 已触发");
+
+  airSerial.begin(AIR_BAUD, SERIAL_8N1, AIR_RX, AIR_TX);
+  delay(8000);
+  airAtReady = probeAir780At(115200) || probeAir780At(9600);
+  if (!airAtReady) {
+    Serial.println("Air780EX AT 无响应，请检查 GPIO4/GPIO5 接线、GND、模块开机状态");
+  }
+}
 #endif
 
 // ==================== OTA 无线升级 ====================
@@ -1276,6 +1567,10 @@ void setup() {
 
 #ifdef USE_GPS
   initGPS();
+#endif
+
+#ifdef USE_AIR780EX
+  initAir780EX();
 #endif
 
   startTime = millis();
@@ -1330,10 +1625,9 @@ void loop() {
   }
 
 #ifdef USE_GPS
-  // GPS 定时读取 + 发布（30s）
+  // GPS 定时发布（坐标在 publishSensorData 中每 5 秒更新）
   if (millis() - lastGpsPublish >= GPS_INTERVAL) {
     lastGpsPublish = millis();
-    readGPS();
     if (gpsFix > 0 && mqttClient.connected()) {
       char buf[100];
       snprintf(buf, sizeof(buf),

@@ -11,6 +11,7 @@ header('Content-Type: application/json; charset=utf-8');
 
 try {
     $db = getDB();
+    $charset = defined('DB_FALLBACK_CHARSET') ? DB_FALLBACK_CHARSET : 'utf8';
 
     $sql = "CREATE TABLE IF NOT EXISTS sensor_data (
         id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -22,7 +23,7 @@ try {
         recorded_at DATETIME NOT NULL COMMENT '记录时间',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_recorded (recorded_at)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='传感器历史数据'";
+    ) ENGINE=InnoDB DEFAULT CHARSET={$charset} COMMENT='传感器历史数据'";
 
     $db->exec($sql);
 
