@@ -35,10 +35,26 @@
   /* 顶部 */
   .topbar{position:absolute;top:0;left:0;right:0;z-index:1000;display:flex;align-items:center;justify-content:space-between;padding:12px 16px;pointer-events:none}
   .topbar>*{pointer-events:auto}
-  .title{font-size:2.2rem;font-weight:700;color:#f00}
+.status-group{display:flex;align-items:center;gap:8px;flex-shrink:0}  .title{font-size:2.2rem;font-weight:700;color:#f00}
   .conn-badge{display:flex;align-items:center;gap:8px;background:var(--panel-bg);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:100px;padding:6px 14px;font-size:.7rem;color:var(--text2)}
   .conn-dot{width:8px;height:8px;border-radius:50%;background:var(--red);transition:background .4s}
   .conn-dot.live{background:var(--green);box-shadow:0 0 8px rgba(0,212,170,.4)}
+.cell-badge{display:flex;align-items:center;gap:12px;background:var(--panel-bg);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:100px;padding:6px 14px;font-size:.65rem;color:var(--text2);white-space:nowrap}
+.cell-item{display:flex;align-items:center;gap:4px}
+.cell-dot{width:6px;height:6px;border-radius:50%}
+.cell-dot.ok{background:var(--green)}
+.cell-dot.warn{background:var(--orange)}
+.cell-dot.err{background:var(--red)}
+.cell-sep{width:1px;height:12px;background:var(--border)}
+.sig-bars{display:flex;align-items:flex-end;gap:1.5px;height:14px}
+.sig-bar{width:3px;border-radius:1px;background:var(--border);transition:background .3s}
+.sig-bar:nth-child(1){height:4px}.sig-bar:nth-child(2){height:7px}
+.sig-bar:nth-child(3){height:10px}.sig-bar:nth-child(4){height:14px}
+.sig-bar.s0{background:var(--border)}
+.sig-bar.s1{background:var(--red)}
+.sig-bar.s2{background:var(--orange)}
+.sig-bar.s3{background:var(--green)}
+.sig-bar.s4{background:var(--green)}
 
   /* 底部面板 — 可上滑 */
   .infobar{
@@ -104,7 +120,25 @@
   .share-toast{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--panel-bg);border:1px solid var(--border);border-radius:12px;padding:12px 20px;font-size:.85rem;color:var(--text);z-index:9999;display:none;box-shadow:0 8px 32px rgba(0,0,0,.5)}
   .share-toast.show{display:block;animation:fadeOut 2s forwards}
   @keyframes fadeOut{0%,60%{opacity:1}100%{opacity:0}}
-</style>
+
+/* 移动端适配 */
+@media(max-width:480px){
+  .topbar{flex-wrap:wrap;gap:6px;padding:8px 10px}
+  .title{font-size:1.3rem;width:100%}
+  .conn-badge{padding:4px 10px;font-size:.6rem;gap:5px}
+  .conn-dot{width:6px;height:6px}
+  .cell-badge{padding:4px 10px;font-size:.55rem;gap:6px}
+  .cell-dot{width:5px;height:5px}
+  .sig-bars{height:11px}
+  .sig-bar:nth-child(1){height:3px}.sig-bar:nth-child(2){height:5px}
+  .sig-bar:nth-child(3){height:8px}.sig-bar:nth-child(4){height:11px}
+}
+@media(max-width:360px){
+  .cell-badge > .cell-item:last-child{display:none}
+  .cell-badge > .cell-sep:last-child{display:none}
+  .cell-badge{gap:4px}
+  .status-group{gap:4px}
+}</style>
 </head>
 <body>
 
@@ -113,12 +147,27 @@
 <div class="topbar">
   <div class="title">GPS 定位，张伟伟</div>
   <div class="conn-badge" id="gpsWarning" style="display:none;background:rgba(255,71,87,.15);border-color:rgba(255,71,87,.4);color:#ff4757;font-size:.7rem;padding:4px 10px;border-radius:8px;position:absolute;top:50px;left:16px;right:16px;text-align:center">📡 GPS 信号丢失 — 显示最后已知位置</div>
-  <div class="conn-badge">
+  <div class="status-group">\
+    <div class="conn-badge">
     <div class="conn-dot" id="connDot"></div>
     <span id="connText">连接中</span>
   </div>
+  <div class="cell-badge" id="cellBadge">
+    <div class="cell-item"><div class="cell-dot" id="cellSim"></div><span id="cellSimTxt">SIM 卡--</span></div>
+    <div class="cell-sep"></div>
+    <div class="cell-item">
+      <div class="sig-bars" id="sigBars">
+        <div class="sig-bar s0"></div><div class="sig-bar s0"></div>
+        <div class="sig-bar s0"></div><div class="sig-bar s0"></div>
+      </div>
+    </div>
+    <div class="cell-sep"></div>
+    <div class="cell-item"><div class="cell-dot" id="cellNet"></div><span id="cellNetTxt">网络--</span></div>
+    <div class="cell-sep"></div>
+    <div class="cell-item"><span>AirM2M Air780EX</span></div>
+  </div>
 </div>
-
+  </div>
 <!-- 右侧按钮组 -->
 <div class="right-btns" id="rightBtns">
   <button class="rbtn" onclick="zoomIn()" title="放大">+</button>
@@ -185,7 +234,7 @@ let mqttConnected=!1,lastDataTime=0,lastUpdate=0;
 client.on('connect',()=>{
   mqttConnected=!0;
   $('connDot').classList.add('live');$('connText').textContent='已连接';
-  client.subscribe(['esp32/gps','esp32/status']);
+  client.subscribe(['esp32/gps','esp32/status','esp32/cellular']);
   updateRelativeTime();
 });
 client.on('reconnect',()=>{
@@ -3196,7 +3245,10 @@ function loadPlayback(){
   fetch('https://www.sseeee.com/esp32/mmq/api.php?date='+date)
     .then(r=>r.json()).then(d=>{
       if(d.status==='ok'&&d.data.length>0){
-        pbData=d.data.filter(p=>p.lat&&p.lng&&p.lat!==0);
+        pbData=d.data.filter(p=>p.lat&&p.lng&&p.lat!==0).map(p=>{
+          const gcj=wgs2gcj(Number(p.lat),Number(p.lng));
+          return {...p,lat:gcj[0],lng:gcj[1]};
+        });
         $('pbLabel').textContent=pbData.length+'条(云端) ';pbPlay();
       }else{
         pbData=[];$('pbLabel').textContent='无数据';
@@ -3278,11 +3330,31 @@ client.on('message',(topic,payload)=>{
   lastDataTime=Date.now();
   try{
     const d=JSON.parse(payload.toString());
+    if(topic==='esp32/cellular'){updateCellular(d);return;}
     if(d.fix>0&&d.lat&&d.lng&&(d.lat!==0||d.lng!==0)){
       updateDisplay(d);
     }
   }catch(e){}
 });
+
+function updateCellular(d){
+  if(d.sim==='ready'){$('cellSim').className='cell-dot ok';$('cellSimTxt').textContent='SIM 就绪';}
+  else{$('cellSim').className='cell-dot err';$('cellSimTxt').textContent='SIM 异常';}
+  const csq=d.csq||99;
+  const level=csq===99||csq<0?0:csq<=6?1:csq<=14?2:csq<=22?3:4;
+  const bars=$('sigBars').children;
+  for(let i=0;i<bars.length;i++)bars[i].className='sig-bar s'+(i<level?level:0);
+  if(d.net==='registered'){
+    $('cellNet').className='cell-dot ok';
+    $('cellNetTxt').textContent=(d.tech||'4G')+' 在线';
+  }else if(d.net==='searching'){
+    $('cellNet').className='cell-dot warn';
+    $('cellNetTxt').textContent='搜索中';
+  }else{
+    $('cellNet').className='cell-dot err';
+    $('cellNetTxt').textContent='无服务';
+  }
+}
 
 function updateDisplay(d){
   const p=normalizeGpsPoint(d);

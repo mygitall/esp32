@@ -53,7 +53,10 @@ const char* mqtt_topic_status = "esp32/status";
 const char* mqtt_topic_led = "esp32/led";
 const char* mqtt_topic_cmd = "esp32/cmd";
 const char* mqtt_topic_gps  = "esp32/gps";
+const char* mqtt_topic_cellular = "esp32/cellular";
 const unsigned long MQTT_INTERVAL = 5000;  // 每 5 秒发布一次
+const unsigned long CELLULAR_INTERVAL = 30000;  // 每 30 秒上报蜂窝状态
+unsigned long lastCellularPublish = 0;
 
 // HTTP POST 上报（存入 PHP 虚拟主机 MySQL）
 const char* HTTP_REPORT_URL = "https://www.sseeee.com/esp32/mmq/receiver.php";
@@ -1092,6 +1095,46 @@ bool cellularHttpReport(String json) {
   if (!ok) cellularReady = false;
   return ok;
 }
+
+void publishCellularStatus() {
+  if (!airAtReady || !mqttClient.connected()) return;
+
+  String cpin = airCommand("AT+CPIN?", 1500);
+  bool simReady = cpin.indexOf("READY") >= 0;
+
+  String csqResp = airCommand("AT+CSQ", 1500);
+  int csqVal = 99;
+  int p = csqResp.indexOf("+CSQ:");
+  if (p >= 0) csqVal = csqResp.substring(p + 5).toInt();
+
+  String creg = airCommand("AT+CREG?", 1500);
+  int netStat = 0;
+  p = creg.indexOf("+CREG:");
+  if (p >= 0) {
+    int comma = creg.indexOf(",", p);
+    if (comma >= 0) netStat = creg.substring(comma + 1).toInt();
+  }
+
+  String cpsi = airCommand("AT+CPSI?", 2500);
+  String netTech = "";
+  p = cpsi.indexOf("+CPSI:");
+  if (p >= 0) {
+    int comma = cpsi.indexOf(",", p + 6);
+    if (comma >= 0) netTech = cpsi.substring(p + 6, comma);
+    netTech.trim();
+  }
+
+  String json = "{";
+  json += "\"sim\":\"" + String(simReady ? "ready" : "error") + "\",";
+  json += "\"csq\":" + String(csqVal) + ",";
+  json += "\"net\":\"" + String(netStat == 1 || netStat == 5 ? "registered" : netStat == 2 ? "searching" : netStat == 3 ? "denied" : "unknown") + "\",";
+  json += "\"tech\":\"" + netTech + "\"";
+  json += "}";
+
+  mqttClient.publish(mqtt_topic_cellular, json.c_str());
+  Serial.print("Cellular: ");
+  Serial.println(json);
+}
 #endif
 
 // MQTT 回调：接收远程指令
@@ -1635,6 +1678,13 @@ void loop() {
         gpsLat, gpsLng, gpsAlt, gpsSpd, gpsSat, gpsFix);
       mqttClient.publish(mqtt_topic_gps, buf);
     }
+  }
+#endif
+
+#ifdef USE_AIR780EX
+  if (millis() - lastCellularPublish >= CELLULAR_INTERVAL) {
+    lastCellularPublish = millis();
+    publishCellularStatus();
   }
 #endif
 
