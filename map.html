@@ -55,6 +55,15 @@
 .sig-bar.s2{background:var(--orange)}
 .sig-bar.s3{background:var(--green)}
 .sig-bar.s4{background:var(--green)}
+.gps-bars{display:inline-flex;align-items:flex-end;gap:1.5px;height:14px;vertical-align:middle;margin-right:4px}
+.gps-bar{width:3px;border-radius:1px;background:var(--border);transition:background .3s}
+.gps-bar:nth-child(1){height:4px}.gps-bar:nth-child(2){height:7px}
+.gps-bar:nth-child(3){height:10px}.gps-bar:nth-child(4){height:14px}
+.gps-bar.g0{background:var(--border)}
+.gps-bar.g1{background:var(--red)}
+.gps-bar.g2{background:var(--orange)}
+.gps-bar.g3{background:var(--green)}
+.gps-bar.g4{background:var(--green)}
 
   /* 底部面板 — 可上滑 */
   .infobar{
@@ -138,6 +147,22 @@
   .cell-badge > .cell-sep:last-child{display:none}
   .cell-badge{gap:4px}
   .status-group{gap:4px}
+/* GPX 导出按钮 */
+.rbtn.gpx-btn{background:rgba(0,212,170,.1);border-color:var(--green);color:var(--green)}
+.rbtn.gpx-btn:active{background:rgba(0,212,170,.25)}
+/* 行程摘要弹窗 */
+.trip-summary{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.55);z-index:2000;display:none;align-items:center;justify-content:center}
+.trip-summary.show{display:flex}
+.trip-summary .ts-card{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:28px 24px;width:88%;max-width:340px;max-height:85vh;overflow-y:auto}
+.trip-summary .ts-card h3{font-size:1.2rem;text-align:center;margin-bottom:18px;color:var(--text)}
+.trip-summary .ts-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);font-size:.85rem;color:var(--text2)}
+.trip-summary .ts-row .ts-val{font-weight:700;color:var(--accent);font-size:.9rem}
+.trip-summary .ts-card .ts-close{width:100%;margin-top:18px;padding:12px;border-radius:12px;border:none;background:var(--accent);color:#fff;font-size:1rem;font-weight:600;cursor:pointer}
+.trip-summary .ts-card .ts-close:active{opacity:.8}
+/* 迷你速度曲线 */
+.info-chart{margin-top:10px;display:none}
+.infobar.expanded .info-chart{display:block}
+.info-chart canvas{width:100%;height:56px;border-radius:8px;background:var(--surface2);display:block}
 }</style>
 </head>
 <body>
@@ -181,6 +206,7 @@
   <button class="rbtn" onclick="navigateHere()" title="一键导航">🧭</button>
   <button class="rbtn" id="btnShareImg" onclick="shareImage()" title="分享轨迹图片">🖼</button>
   <button class="rbtn" id="btnInstall" onclick="installPWA()" title="添加到桌面" style="display:none">📲</button>
+  <button class="rbtn gpx-btn" onclick="exportGPX()" title="导出轨迹">📥</button>
 </div>
 
 <!-- 回放控制栏 -->
@@ -206,13 +232,14 @@
   </div>
   <div style="font-size:.75rem;color:var(--text2);padding:2px 0" id="roadName">--</div>
   <div class="info-grid">
-    <div class="info-item">📡 卫星 <span id="sat">--</span></div>
+    <div class="info-item">📡 <span class="gps-bars" id="gpsBars"><span class="gps-bar g0"></span><span class="gps-bar g0"></span><span class="gps-bar g0"></span><span class="gps-bar g0"></span></span><span id="sat">--</span></div>
     <div class="info-item">⚡ 海拔 <span id="alt">--</span>m</div>
     <div class="info-item">🏃 速度 <span id="spd">--</span>km/h</div>
     <div class="info-item">🕐 更新 <span id="ts">--</span></div>
   </div>
   <div class="info-expand">
     <div class="mileage" id="mileage">📏 今日里程: 0.00 km</div>
+    <div class="info-chart"><canvas id="speedChart"></canvas></div>
     <div class="info-item" style="margin-top:6px">📍 精度 ±<span id="acc">--</span>m</div>
     <div class="info-item">🔔 围栏 <span id="fence">--</span></div>
     <div class="info-item" style="grid-column:1/-1">📍 <span id="addr">定位中...</span></div>
@@ -221,6 +248,18 @@
 
 <div class="share-toast" id="shareToast"></div>
 
+<div class="trip-summary" id="tripSummary">
+  <div class="ts-card">
+    <h3>📊 行程摘要</h3>
+    <div class="ts-row"><span>总里程</span><span class="ts-val" id="sDist">--</span></div>
+    <div class="ts-row"><span>耗时</span><span class="ts-val" id="sDur">--</span></div>
+    <div class="ts-row"><span>最高速度</span><span class="ts-val" id="sMaxSpd">--</span></div>
+    <div class="ts-row"><span>平均速度</span><span class="ts-val" id="sAvgSpd">--</span></div>
+    <div class="ts-row"><span>海拔范围</span><span class="ts-val" id="sAlt">--</span></div>
+    <div class="ts-row"><span>轨迹点数</span><span class="ts-val" id="sPts">--</span></div>
+    <button class="ts-close" onclick="$('tripSummary').classList.remove('show')">关闭</button>
+  </div>
+</div>
 <script>
 const $=id=>document.getElementById(id);
 
@@ -269,13 +308,15 @@ function httpPoll(){
     }
   }).catch(()=>{});
 }
-setInterval(httpPoll,5e3);
+setInterval(httpPoll,3e3);
 
 // ============= Leaflet 地图 =============
-// 从缓存恢复上次位置
-let cachedPos=[31.23,121.47];
+// 从缓存恢复上次位置；无缓存则等待 GPS 定位
+let cachedPos=null;
 try{const c=JSON.parse(localStorage.getItem('gps_last_pos'));if(c&&c.lat)cachedPos=[c.lat,c.lng]}catch(e){}
-const leafMap=L.map('map',{center:cachedPos,zoom:15,attributionControl:!1,zoomControl:!1});
+if(!cachedPos)cachedPos=[35.86,104.19]; // 中国中心，仅无缓存时兜底
+const leafMap=L.map('map',{center:cachedPos,zoom:cachedPos[0]>34?5:15,attributionControl:!1,zoomControl:!1});
+let firstFixDone=!1;
 
 // 高德底图（默认浅色，避免加载暗色再切换的闪烁）
 const darkTiles=L.tileLayer('https://wprd0{s}.is.autonavi.com/appmaptile?x={x}&y={y}&z={z}&lang=zh_cn&size=1&scl=1&style=8',{subdomains:'1234',maxZoom:18});
@@ -410,11 +451,12 @@ function loadTodayTrack(){
       gpsMarker.setLatLng([p.lat,p.lng]);
       accuracyCircle.setLatLng([p.lat,p.lng]);
       $('coords').textContent=p.lng.toFixed(6)+', '+p.lat.toFixed(6);
-      $('sat').textContent=p.sat||'--';
+      $('sat').textContent=p.sat||'--';updateGpsBars(p.sat||0);
       $('alt').textContent=p.alt.toFixed(1);
       $('spd').textContent=p.spd.toFixed(1);
       reverseGeocode(p.lat,p.lng);
-      if(followMode)leafMap.setView([p.lat,p.lng],leafMap.getZoom());
+      if(!firstFixDone){firstFixDone=!0;leafMap.setView([p.lat,p.lng],16);}
+      else leafMap.setView([p.lat,p.lng],leafMap.getZoom());
     }).catch(()=>{});
 }
 
@@ -451,7 +493,7 @@ function reverseGeocode(lat,lng){
     }).catch(()=>{});
 }
 // ============= 跟随模式 =============
-let followMode=!1;
+let followMode=!0;
 function toggleFollow(){
   followMode=!followMode;
   $('btnFollow').classList.toggle('on',followMode);
@@ -3267,7 +3309,7 @@ function pbPlay(){
     gpsMarker.setLatLng([p.lat,p.lng]);
     leafMap.setView([p.lat,p.lng],leafMap.getZoom());
     $('coords').textContent=p.lng.toFixed(6)+', '+p.lat.toFixed(6);
-    $('sat').textContent=p.sat||'--';$('alt').textContent=(p.alt||0).toFixed(1);
+    $('sat').textContent=p.sat||'--';updateGpsBars(p.sat||0);$('alt').textContent=(p.alt||0).toFixed(1);
     $('spd').textContent=(p.spd||0).toFixed(1);$('ts').textContent=p.ts||'--';
     reverseGeocode(p.lat,p.lng);
     traveledPath.push([p.lat,p.lng,p.spd||0]);drawTrack();updateMileage();
@@ -3337,6 +3379,12 @@ client.on('message',(topic,payload)=>{
   }catch(e){}
 });
 
+function updateGpsBars(sat){
+  sat=sat||0;
+  const level=sat===0?0:sat<=4?1:sat<=8?2:sat<=12?3:4;
+  const bars=$('gpsBars').children;
+  for(let i=0;i<bars.length;i++)bars[i].className='gps-bar g'+(i<level?level:0);
+}
 function updateCellular(d){
   if(d.sim==='ready'){$('cellSim').className='cell-dot ok';$('cellSimTxt').textContent='SIM 就绪';}
   else{$('cellSim').className='cell-dot err';$('cellSimTxt').textContent='SIM 异常';}
@@ -3368,20 +3416,23 @@ function updateDisplay(d){
 
   reverseGeocode(lat,lng);
   gpsMarker.setLatLng([lat,lng]);
+  updateHeading(lat,lng);
   accuracyCircle.setLatLng([lat,lng]);
 
-  if(followMode)leafMap.setView([lat,lng],leafMap.getZoom(),{animate:!0});
+  if(!firstFixDone){firstFixDone=!0;leafMap.setView([lat,lng],16);}
+  else leafMap.setView([lat,lng],leafMap.getZoom(),{animate:!1});
 
   if(appendTrackPoint(p)){drawTrack();updateMileage()}
   gpsHistory.push({ts:Date.now(),lat,lng,spd:p.spd,alt:p.alt,sat:p.sat});
   if(gpsHistory.length>1e4)gpsHistory.shift();
 
   checkFence(lat,lng);
+  scheduleChart();
   updateRelativeTime();
 
   $('coords').textContent=lng.toFixed(6)+', '+lat.toFixed(6);
   const sat=d.sat||0;
-  $('sat').textContent=sat||'--';
+  $('sat').textContent=sat||'--';updateGpsBars(sat);
   $('gpsWarning').style.display=sat>0?'none':'block';
   $('alt').textContent=(d.alt||0).toFixed(1);
   $('spd').textContent=(d.spd||0).toFixed(1);
@@ -3389,13 +3440,133 @@ function updateDisplay(d){
 }
 
 // ============= 启动 =============
-loadTodayTrack();httpPoll();
+loadTodayTrack();
+httpPoll();setTimeout(httpPoll,1e3);setTimeout(httpPoll,3e3);
+$('btnFollow').classList.add('on');
+// 自动锁定 GPS 位置（等同于点击📍按钮）
+setTimeout(()=>{if(firstFixDone)centerOnMarker()},800);
+setTimeout(()=>{if(firstFixDone)centerOnMarker()},2000);
 setTimeout(()=>leafMap.invalidateSize(),300);
 window.addEventListener('resize',()=>leafMap.invalidateSize());
 document.addEventListener('gesturestart',e=>e.preventDefault(),{passive:!1});
 document.addEventListener('gesturechange',e=>e.preventDefault(),{passive:!1});
 document.addEventListener('gestureend',e=>e.preventDefault(),{passive:!1});
 requestNotify();
+// ============= GPX 轨迹导出 =============
+function exportGPX(){
+  const allPts=traveledPath.length?traveledPath:null;
+  if(!allPts||allPts.length<2){showToast('⚠️ 轨迹点不足，无法导出');return}
+  const date=new Date().toISOString().slice(0,10);
+  let gpx='<?xml version="1.0" encoding="UTF-8"?>\n';
+  gpx+='<gpx version="1.1" creator="ESP32-GPS" xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">\n';
+  gpx+='  <trk>\n    <name>ESP32 Track '+date+'</name>\n    <trkseg>\n';
+  allPts.forEach(p=>{
+    gpx+='      <trkpt lat="'+p[0].toFixed(7)+'" lon="'+p[1].toFixed(7)+'"><ele>0</ele><time>'+new Date().toISOString()+'</time></trkpt>\n';
+  });
+  gpx+='    </trkseg>\n  </trk>\n</gpx>';
+  const blob=new Blob([gpx],{type:'application/gpx+xml'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='esp32-track-'+date+'.gpx';a.click();
+  URL.revokeObjectURL(a.href);
+  showToast('✅ GPX 已导出 '+allPts.length+' 个轨迹点');
+}
+
+// ============= Toast 提示 =============
+function showToast(msg){
+  const t=$('shareToast');t.textContent=msg;t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),2000);
+}
+
+// ============= 行程摘要 =============
+function showTripSummary(){
+  const pts=traveledPath;
+  if(pts.length<2){showToast('⚠️ 轨迹数据不足');return}
+  let maxSpd=0,sumSpd=0;
+  let minAlt=Infinity,maxAlt=-Infinity,hasAlt=false;
+  pts.forEach(p=>{
+    const s=p[2]||0;if(s>maxSpd)maxSpd=s;sumSpd+=s;
+    if(p.length>3&&p[3]!=null){const a=p[3];if(a<minAlt)minAlt=a;if(a>maxAlt)maxAlt=a;hasAlt=true}
+  });
+  const firstTs=gpsHistory.length?gpsHistory[0].ts:0;
+  const lastTs=gpsHistory.length?gpsHistory[gpsHistory.length-1].ts:0;
+  const durSec=lastTs&&firstTs?Math.floor((lastTs-firstTs)/1000):0;
+  $('sDist').textContent=totalMileage.toFixed(2)+' km';
+  $('sDur').textContent=formatDuration(durSec);
+  $('sMaxSpd').textContent=maxSpd.toFixed(1)+' km/h';
+  $('sAvgSpd').textContent=(sumSpd/pts.length).toFixed(1)+' km/h';
+  $('sAlt').textContent=hasAlt?minAlt.toFixed(0)+' ~ '+maxAlt.toFixed(0)+' m':'--';
+  $('sPts').textContent=pts.length+' 个 ('+(gpsHistory.length||0)+' 历史)';
+  $('tripSummary').classList.add('show');
+}
+function formatDuration(sec){
+  if(sec<60)return sec+'秒';
+  if(sec<3600)return Math.floor(sec/60)+'分'+sec%60+'秒';
+  const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60);
+  return h+'小时'+m+'分';
+}
+
+// ============= 迷你速度曲线 =============
+function drawSpeedChart(){
+  if(gpsHistory.length<3)return;
+  const canvas=$('speedChart');
+  if(!canvas)return;
+  const dpr=window.devicePixelRatio||1;
+  const rect=canvas.getBoundingClientRect();
+  const w=canvas.width=rect.width*dpr;
+  const h=canvas.height=112;
+  canvas.style.width=rect.width+'px';
+  const ctx=canvas.getContext('2d');
+  ctx.scale(dpr,dpr);
+  const rw=rect.width,rh=canvas.height/dpr;
+  ctx.clearRect(0,0,rw,rh);
+  const recent=gpsHistory.slice(-120);
+  if(recent.length<2)return;
+  const maxSpd=Math.max(...recent.map(p=>p.spd||0),5);
+  const step=rw/(recent.length-1);
+  // fill
+  ctx.beginPath();
+  recent.forEach((p,i)=>{const x=i*step,y=rh-(p.spd||0)/maxSpd*(rh-12);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y)});
+  ctx.lineTo(rw,rh);ctx.lineTo(0,rh);ctx.closePath();
+  ctx.fillStyle='rgba(79,143,255,.12)';ctx.fill();
+  // line
+  ctx.beginPath();ctx.strokeStyle='#4f8fff';ctx.lineWidth=1.5;
+  recent.forEach((p,i)=>{const x=i*step,y=rh-(p.spd||0)/maxSpd*(rh-12);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y)});
+  ctx.stroke();
+  // max label
+  ctx.fillStyle='#8b8f9a';ctx.font='9px -apple-system,sans-serif';
+  ctx.fillText(maxSpd.toFixed(0)+' km/h',4,10);
+}
+
+// ============= 航向指示 =============
+let lastHeading=0,lastHeadingPos=null;
+function updateHeading(lat,lng){
+  if(!lastHeadingPos){lastHeadingPos=[lat,lng];return}
+  const dLat=lat-lastHeadingPos[0],dLng=lng-lastHeadingPos[1];
+  if(Math.abs(dLat)<1e-7&&Math.abs(dLng)<1e-7)return;
+  lastHeadingPos=[lat,lng];
+  let deg=Math.atan2(dLng,dLat)*180/Math.PI;
+  if(deg<0)deg+=360;
+  lastHeading=deg;
+  if(gpsMarker._icon){
+    const el=gpsMarker._icon.querySelector('div');
+    if(el){el.style.transform='rotate('+deg+'deg)';el.style.transition='transform .6s ease-out'}
+  }
+}
+
+// ============= 更新迷你曲线 =============
+let chartTimer=null;
+function scheduleChart(){
+  if(!chartTimer)chartTimer=setTimeout(()=>{drawSpeedChart();chartTimer=null},1000);
+}
+// ============= 长按 infobar 显示行程摘要 =============
+let infobarPressTimer=null;
+(function(){
+  const el=$('infobar');
+  if(!el)return;
+  el.addEventListener('touchstart',()=>{infobarPressTimer=setTimeout(showTripSummary,600)});
+  el.addEventListener('touchend',()=>clearTimeout(infobarPressTimer));
+  el.addEventListener('touchmove',()=>clearTimeout(infobarPressTimer));
+})();
 </script>
 </body>
 </html>
