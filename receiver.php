@@ -31,8 +31,8 @@ try {
     $db = getDB();
     $now = date('Y-m-d H:i:s');
     $stmt = $db->prepare(
-        'INSERT INTO sensor_data (temperature, humidity, rssi, uptime, ip, lat, lng, alt, spd, sat, fix, recorded_at)
-         VALUES (:temp, :hum, :rssi, :uptime, :ip, :lat, :lng, :alt, :spd, :sat, :fix, :ts)'
+        'INSERT INTO sensor_data (temperature, humidity, rssi, uptime, ip, lat, lng, alt, spd, sat, fix, cell_csq, cell_sim, cell_net, cell_tech, recorded_at)
+         VALUES (:temp, :hum, :rssi, :uptime, :ip, :lat, :lng, :alt, :spd, :sat, :fix, :csq, :sim, :net, :tech, :ts)'
     );
     $stmt->execute([
         'temp'   => $params['temp'] ?? null,

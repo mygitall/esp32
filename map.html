@@ -303,8 +303,12 @@ function wgs2gcj(wgLat,wgLng){
 const API_BASE='https://www.sseeee.com/esp32/mmq/api.php';
 function httpPoll(){
   fetch(API_BASE+'?latest=1').then(r=>r.json()).then(d=>{
-    if(d.status==='ok'&&d.latest&&d.latest.lat&&d.latest.lng&&d.latest.fix>0){
-      updateDisplay(d.latest);
+    if(d.status==='ok'&&d.latest){
+      const p=d.latest;
+      // GPS 数据
+      if(p.lat&&p.lng&&p.fix>0) updateDisplay(p);
+      // 蜂窝数据（WiFi断开时 HTTP 上报携带 csq/sim/net/tech）
+      if(p.csq!=null) updateCellular({sim:p.sim||'unknown',csq:Number(p.csq),net:p.net||'unknown',tech:p.tech||''});
     }
   }).catch(()=>{});
 }
@@ -403,7 +407,7 @@ setTimeout(applyAutoTheme,500);
 
 // 小车标记
 const carIcon=L.divIcon({html:'<div style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;font-size:28px;filter:drop-shadow(2px 2px 3px rgba(0,0,0,.5))">🚗</div>',iconSize:[36,36],iconAnchor:[18,18],className:''});
-const gpsMarker=L.marker(cachedPos,{icon:carIcon}).addTo(leafMap).bindTooltip('定位中...',{direction:'top',offset:[0,-20],className:'addr-tooltip'});
+const gpsMarker=L.marker(cachedPos,{icon:carIcon}).addTo(leafMap).bindTooltip('定位中...',{direction:'top',offset:[0,-20],className:'addr-tooltip',permanent:!0});
 
 // 精度圈
 const accuracyCircle=L.circle([31.23,121.47],{radius:100,color:'#4f8fff',weight:1,opacity:.5,fillOpacity:.1}).addTo(leafMap);
@@ -500,13 +504,12 @@ function reverseGeocode(lat,lng){
       if(d.status==='ok'){
         const road=d.road||'',num=d.number||'',district=d.district||'';
         const city=d.city||'',state=d.state||'';
-        // 上海市浦东新区 · 某某路99号
-        const prefix=[state,city,district].filter(Boolean).join('');
-        const fullAddr=prefix+(prefix?' · ':'')+road+(num||'');
-        const shortName=(district||city||'')+(district||city?' · ':'')+road+(num||'');
-        gpsMarker.setTooltipContent(fullAddr||d.display||'');
+        const roadLine=road?(road+(num||'')):(d.display||'');
+        const areaLine=[state,city,district].filter(Boolean).join('');
+        const fullAddr=areaLine+(areaLine&&roadLine?' · ':'')+roadLine;
+        gpsMarker.setTooltipContent('<b>'+roadLine+'</b>'+(areaLine?'<br><small>'+areaLine+'</small>':''));
         $('addr').textContent=fullAddr||d.display||'';
-        $('roadName').textContent='📍 '+(shortName||d.display||'--');
+        $('roadName').textContent='📍 '+(roadLine||d.display||'--');
       }
     }).catch(()=>{});
 }
@@ -3431,7 +3434,7 @@ function updateCellular(d){
   for(let i=0;i<bars.length;i++)bars[i].className='sig-bar s'+(i<level?level:0);
   if(d.net==='registered'){
     $('cellNet').className='cell-dot ok';
-    $('cellNetTxt').textContent=(d.tech||'4G')+' 在线';
+    $('cellNetTxt').textContent=mqttConnected?'WiFi 在线':((d.tech||'4G')+' 在线');
   }else if(d.net==='searching'){
     $('cellNet').className='cell-dot warn';
     $('cellNetTxt').textContent='搜索中';
@@ -3439,7 +3442,17 @@ function updateCellular(d){
     $('cellNet').className='cell-dot err';
     $('cellNetTxt').textContent='无服务';
   }
+  // 缓存到 localStorage，下次打开页面立即显示
+  try{localStorage.setItem('cell_last',JSON.stringify({sim:d.sim,csq:csq,net:d.net,tech:d.tech,level}))}catch(e){}
 }
+
+// 启动时从缓存恢复蜂窝状态，立即显示
+(function(){
+  try{
+    const c=JSON.parse(localStorage.getItem('cell_last'));
+    if(c)updateCellular({sim:c.sim,csq:c.csq,net:c.net,tech:c.tech});
+  }catch(e){}
+})();
 
 function updateDisplay(d){
   const p=normalizeGpsPoint(d);
@@ -3453,6 +3466,7 @@ function updateDisplay(d){
 
   reverseGeocode(lat,lng);
   gpsMarker.setLatLng([lat,lng]);
+  updateStoppedTime(lat,lng);
   updateHeading(lat,lng);
   accuracyCircle.setLatLng([lat,lng]);
 
@@ -3478,7 +3492,8 @@ function updateDisplay(d){
 
 // ============= 启动 =============
 loadTodayTrack();
-httpPoll();setTimeout(httpPoll,1e3);setTimeout(httpPoll,3e3);
+// 启动时立即连拉 5 次，快速显示蜂窝信号
+httpPoll();setTimeout(httpPoll,500);setTimeout(httpPoll,1e3);setTimeout(httpPoll,2e3);setTimeout(httpPoll,4e3);
 $('btnFollow').classList.add('on');
 // 自动锁定 GPS 位置（等同于点击📍按钮）
 setTimeout(()=>{if(firstFixDone)centerOnMarker()},800);
@@ -3573,6 +3588,23 @@ function drawSpeedChart(){
   ctx.fillStyle='#8b8f9a';ctx.font='9px -apple-system,sans-serif';
   ctx.fillText(maxSpd.toFixed(0)+' km/h',4,10);
 }
+
+// ============= 停留时间 =============
+let stoppedSince=Date.now(),stoppedPos=null;
+function updateStoppedTime(lat,lng){
+  if(!stoppedPos){stoppedPos=[lat,lng];return}
+  const dLat=(lat-stoppedPos[0])*111320,dLng=(lng-stoppedPos[1])*111320*Math.cos(stoppedPos[0]*Math.PI/180);
+  if(Math.sqrt(dLat*dLat+dLng*dLng)>10){stoppedSince=Date.now();stoppedPos=[lat,lng]}
+}
+function formatStopped(){
+  const sec=Math.floor((Date.now()-stoppedSince)/1000);
+  if(sec<60)return sec+'秒';
+  if(sec<3600)return Math.floor(sec/60)+'分'+sec%60+'秒';
+  return Math.floor(sec/3600)+'时'+Math.floor(sec%3600/60)+'分';
+}
+setInterval(()=>{
+  const t=gpsMarker.getTooltip();if(t){const s=t.getContent();if(typeof s==='string')t.setContent(s.replace(/<br>⏱.*/,'')+'<br>⏱ 停留 '+formatStopped())}
+},1000);
 
 // ============= 航向指示 =============
 let lastHeading=0,lastHeadingPos=null;

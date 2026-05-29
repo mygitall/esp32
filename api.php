@@ -27,64 +27,69 @@ try {
     if (($_GET['geo'] ?? '') === '1') {
         $lat = $_GET['lat'] ?? 0;
         $lng = $_GET['lng'] ?? 0;
-        // 缓存键：坐标四舍五入到小数点后 3 位（~110m 网格）
-        $cacheKey = round($lat,3) . ',' . round($lng,3);
+        // 缓存键：坐标四舍五入到小数点后 4 位（~11m 网格），1小时过期
+        $cacheKey = round($lat,4) . ',' . round($lng,4);
         $cacheDir = __DIR__ . '/cache';
         $cacheFile = $cacheDir . '/' . md5($cacheKey) . '.json';
         if (!is_dir($cacheDir)) mkdir($cacheDir, 0755, true);
 
-        // 缓存命中且未过期（24 小时）
-        if (file_exists($cacheFile) && (time() - filemtime($cacheFile)) < 86400) {
+        // 缓存命中且未过期（1 小时）
+        if (file_exists($cacheFile) && (time() - filemtime($cacheFile)) < 3600) {
             echo file_get_contents($cacheFile);
             exit;
         }
 
-        $url = "https://nominatim.openstreetmap.org/reverse?format=json&lat={$lat}&lon={$lng}&zoom=18&accept-language=zh";
-        $ctx = stream_context_create(['http'=>['timeout'=>5,'header'=>"User-Agent: ESP32-GPS/1.0\r\n"]]);
-        $resp = @file_get_contents($url, false, $ctx);
-        if ($resp) {
+        // 并行查两个免费地理编码服务，取最好的结果
+        $road = ''; $num = ''; $district = ''; $city = ''; $state = ''; $display = '';
+        $services = [
+            ['url'=>'https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=%f&lon=%f&zoom=17&accept-language=zh&addressdetails=1','road_fields'=>['road','residential','service','pedestrian','footway','path','living_street','cycleway','secondary','tertiary','unclassified','track']],
+        ];
+
+        foreach ($services as $svc) {
+            $url = sprintf($svc['url'], $lat, $lng);
+            $ctx = stream_context_create(['http'=>['timeout'=>5,'header'=>"User-Agent: ESP32-GPS/1.0\r\n"]]);
+            $resp = @file_get_contents($url, false, $ctx);
+            if (!$resp) continue;
             $data = json_decode($resp, true);
+            if (!$data) continue;
             $addr = $data['address'] ?? [];
-            $road = $addr['road']??($addr['pedestrian']??($addr['path']??''));
+            // 从地址字段中提取路名
+            foreach ($svc['road_fields'] as $f) {
+                if (!empty($addr[$f])) { $road = $addr[$f]; break; }
+            }
             $num = $addr['house_number']??'';
             $district = $addr['district']??($addr['suburb']??($addr['county']??($addr['state_district']??'')));
             $city = $addr['city']??($addr['town']??($addr['village']??''));
             $state = $addr['state']??($addr['province']??($addr['region']??''));
             $display = $data['display_name']??'';
-
-            // display_name 兜底解析：例如 "严木桥路, 万祥镇, 浦东新区, 上海市, 中国"
-            if(!$district||!$city||!$state){
-                $parts = array_map('trim', explode(',', $display));
-                // parts: [路, 镇/街道, 区县, 市, 省/国]
-                $c = count($parts);
-                if(!$district && $c>=3) $district = $parts[$c-3]; // 区县
-                if(!$city && $c>=3) $city = $parts[$c-3]??''; // 可能和 district 重叠，取更上级
-                if(!$city && $c>=4) $city = $parts[$c-4];
-                if(!$state && $c>=4) $state = end($parts) === '中国' ? $parts[$c-2] : ($parts[$c-1]??'');
-            }
-
-            $out = json_encode([
-                'status'=>'ok',
-                'road'=>$road, 'number'=>$num,
-                'district'=>$district, 'city'=>$city, 'state'=>$state,
-                'display'=>$display
-            ], JSON_UNESCAPED_UNICODE);
-            file_put_contents($cacheFile, $out);
-            echo $out;
-        } else {
-            // Nominatim 失败时读过期缓存兜底
-            if (file_exists($cacheFile)) {
-                echo file_get_contents($cacheFile);
-            } else {
-                echo json_encode(['status'=>'error','message'=>'API fail']);
-            }
+            // 拿到路名就跳出
+            if ($road) break;
         }
+
+        // display_name 兜底解析
+        if(!$road&&!$district&&!$city&&!$state){
+            $parts = array_map('trim', explode(',', $display));
+            $c = count($parts);
+            if($c>=1) $road = $parts[0];
+            if(!$district && $c>=3) $district = $parts[$c-3];
+            if(!$city && $c>=4) $city = $parts[$c-4];
+            if(!$state && $c>=4) $state = end($parts) === '中国' ? $parts[$c-2] : ($parts[$c-1]??'');
+        }
+
+        $out = json_encode([
+            'status'=>'ok',
+            'road'=>$road, 'number'=>$num,
+            'district'=>$district, 'city'=>$city, 'state'=>$state,
+            'display'=>$display
+        ], JSON_UNESCAPED_UNICODE);
+        file_put_contents($cacheFile, $out);
+        echo $out;
         exit;
     }
 
     // 最新一条：秒开缓存用
     if (($_GET['latest'] ?? '') === '1') {
-        $stmt = $db->query('SELECT recorded_at AS ts, temperature AS temp, humidity AS hum, rssi, lat, lng, alt, spd, sat, fix FROM sensor_data ORDER BY id DESC LIMIT 1');
+        $stmt = $db->query('SELECT recorded_at AS ts, temperature AS temp, humidity AS hum, rssi, lat, lng, alt, spd, sat, fix, cell_csq AS csq, cell_sim AS sim, cell_net AS net, cell_tech AS tech FROM sensor_data ORDER BY id DESC LIMIT 1');
         $row = $stmt->fetch();
         echo json_encode(['status' => 'ok', 'latest' => $row ?: null], JSON_UNESCAPED_UNICODE);
         exit;
@@ -164,7 +169,7 @@ function queryData(PDO $db, array $params): array {
                 GROUP BY ts ORDER BY ts ASC";
     } else {
         // points: 返回所有原始点
-        $sql = "SELECT recorded_at AS ts, temperature AS temp, humidity AS hum, rssi, lat, lng, alt, spd, sat, fix
+        $sql = "SELECT recorded_at AS ts, temperature AS temp, humidity AS hum, rssi, lat, lng, alt, spd, sat, fix, cell_csq AS csq, cell_sim AS sim, cell_net AS net, cell_tech AS tech
                 FROM sensor_data
                 WHERE recorded_at BETWEEN :from AND :to
                 ORDER BY recorded_at ASC";

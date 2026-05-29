@@ -67,6 +67,11 @@ const char* CELLULAR_APN = "UNINET";
 const char* CELLULAR_REPORT_URL = "http://www.sseeee.com/esp32/mmq/receiver.php";
 bool cellularReady = false;
 unsigned long lastCellularSetup = 0;
+// 蜂窝状态缓存（publishCellularStatus 更新，publishSensorData 携带到HTTP上报）
+int cachedCsq = 99;
+String cachedSim = "unknown";
+String cachedNet = "unknown";
+String cachedTech = "";
 
 // PushDeer 推送配置（一个 Key 推送到所有设备）
 const char* PUSHDEER_KEY = "PDU41451T5iKoPmpeiumcfCkvMOYBMnFsN2NGEG7z";
@@ -1097,43 +1102,50 @@ bool cellularHttpReport(String json) {
 }
 
 void publishCellularStatus() {
-  if (!airAtReady || !mqttClient.connected()) return;
+  if (!airAtReady) return;
+  // 即使 WiFi 断开也读取 AT 命令，缓存结果供 HTTP 上报使用
 
-  String cpin = airCommand("AT+CPIN?", 1500);
+  String cpin = airCommand("AT+CPIN?", 800);
   bool simReady = cpin.indexOf("READY") >= 0;
+  cachedSim = simReady ? "ready" : "error";
 
-  String csqResp = airCommand("AT+CSQ", 1500);
+  String csqResp = airCommand("AT+CSQ", 800);
   int csqVal = 99;
   int p = csqResp.indexOf("+CSQ:");
   if (p >= 0) csqVal = csqResp.substring(p + 5).toInt();
+  cachedCsq = csqVal;
 
-  String creg = airCommand("AT+CREG?", 1500);
+  String creg = airCommand("AT+CREG?", 800);
   int netStat = 0;
   p = creg.indexOf("+CREG:");
   if (p >= 0) {
     int comma = creg.indexOf(",", p);
     if (comma >= 0) netStat = creg.substring(comma + 1).toInt();
   }
+  cachedNet = netStat == 1 || netStat == 5 ? "registered" : netStat == 2 ? "searching" : netStat == 3 ? "denied" : "unknown";
 
-  String cpsi = airCommand("AT+CPSI?", 2500);
-  String netTech = "";
+  String cpsi = airCommand("AT+CPSI?", 1200);
   p = cpsi.indexOf("+CPSI:");
   if (p >= 0) {
     int comma = cpsi.indexOf(",", p + 6);
-    if (comma >= 0) netTech = cpsi.substring(p + 6, comma);
-    netTech.trim();
+    if (comma >= 0) cachedTech = cpsi.substring(p + 6, comma);
+    cachedTech.trim();
   }
 
-  String json = "{";
-  json += "\"sim\":\"" + String(simReady ? "ready" : "error") + "\",";
-  json += "\"csq\":" + String(csqVal) + ",";
-  json += "\"net\":\"" + String(netStat == 1 || netStat == 5 ? "registered" : netStat == 2 ? "searching" : netStat == 3 ? "denied" : "unknown") + "\",";
-  json += "\"tech\":\"" + netTech + "\"";
-  json += "}";
-
-  mqttClient.publish(mqtt_topic_cellular, json.c_str());
-  Serial.print("Cellular: ");
-  Serial.println(json);
+  // MQTT 发布（WiFi 在线时）
+  if (mqttClient.connected()) {
+    String json = "{";
+    json += "\"sim\":\"" + cachedSim + "\",";
+    json += "\"csq\":" + String(cachedCsq) + ",";
+    json += "\"net\":\"" + cachedNet + "\",";
+    json += "\"tech\":\"" + cachedTech + "\"";
+    json += "}";
+    mqttClient.publish(mqtt_topic_cellular, json.c_str());
+    Serial.print("Cellular: ");
+    Serial.println(json);
+  } else {
+    Serial.printf("Cellular(cache): sim=%s csq=%d net=%s\n", cachedSim.c_str(), cachedCsq, cachedNet.c_str());
+  }
 }
 #endif
 
@@ -1306,6 +1318,12 @@ void publishSensorData() {
   json += ",\"lat\":" + String(gpsLat, 6) + ",\"lng\":" + String(gpsLng, 6);
   json += ",\"alt\":" + String(gpsAlt, 1) + ",\"spd\":" + String(gpsSpd, 1);
   json += ",\"sat\":" + String(gpsSat) + ",\"fix\":" + String(gpsFix);
+#endif
+#ifdef USE_AIR780EX
+  json += ",\"csq\":" + String(cachedCsq);
+  json += ",\"sim\":\"" + cachedSim + "\"";
+  json += ",\"net\":\"" + cachedNet + "\"";
+  json += ",\"tech\":\"" + cachedTech + "\"";
 #endif
   json += "}";
   mqttClient.publish(mqtt_topic_status, json.c_str());
