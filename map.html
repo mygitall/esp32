@@ -469,6 +469,7 @@ function loadTodayTrack(){
       traveledPath=pts.map(p=>[p.lat,p.lng,p.spd]);
       lastTrackKey=pts[pts.length-1].ts||'';
       drawTrack();updateMileage();
+      calcStoppedFromHistory();
       const p=pts[pts.length-1];
       gpsMarker.setLatLng([p.lat,p.lng]);
       accuracyCircle.setLatLng([p.lat,p.lng]);
@@ -3590,14 +3591,48 @@ function drawSpeedChart(){
 }
 
 // ============= 停留时间 =============
-let stoppedSince=Date.now(),stoppedPos=null;
+let stoppedSince=0,stoppedPos=null;
+(function(){
+  try{const c=JSON.parse(localStorage.getItem('stopped'));if(c&&c.since){stoppedSince=c.since;stoppedPos=c.pos}}catch(e){}
+  if(!stoppedSince)stoppedSince=Date.now();
+})();
+
+function saveStopped(since,pos){
+  stoppedSince=since;stoppedPos=pos;
+  try{localStorage.setItem('stopped',JSON.stringify({since:stoppedSince,pos:stoppedPos}))}catch(e){}
+}
+
 function updateStoppedTime(lat,lng){
   if(!stoppedPos){stoppedPos=[lat,lng];return}
   const dLat=(lat-stoppedPos[0])*111320,dLng=(lng-stoppedPos[1])*111320*Math.cos(stoppedPos[0]*Math.PI/180);
-  if(Math.sqrt(dLat*dLat+dLng*dLng)>10){stoppedSince=Date.now();stoppedPos=[lat,lng]}
+  if(Math.sqrt(dLat*dLat+dLng*dLng)>10)saveStopped(Date.now(),[lat,lng]);
 }
+
+// 从轨迹数据反推真实停留起始（用 traveledPath 自带的 ts 字段）
+function calcStoppedFromHistory(){
+  if(!traveledPath.length)return;
+  // 从后往前找最后一次位移>10m的点对
+  for(let i=traveledPath.length-2;i>=0;i--){
+    const a=traveledPath[i],b=traveledPath[i+1];
+    if(!a||!b)continue;
+    const dLat=(b[0]-a[0])*111320,dLng=(b[1]-a[1])*111320*Math.cos(a[0]*Math.PI/180);
+    if(Math.sqrt(dLat*dLat+dLng*dLng)>10){
+      // b 是最后一次移动后的第一个静止点，从它的时间戳开始算停留
+      const ts=a[3]; // traveledPath[i] = [lat,lng,spd,ts,rawLat,rawLng,alt,sat]
+      if(ts&&typeof ts==='string'){
+        const d=Date.parse(ts.replace(' ','T')+'+08:00');
+        if(Number.isFinite(d)){saveStopped(d,[b[0],b[1]]);return}
+      }
+      // ts 不可用则用当前时间
+      saveStopped(Date.now(),[b[0],b[1]]);
+      return;
+    }
+  }
+}
+
 function formatStopped(){
   const sec=Math.floor((Date.now()-stoppedSince)/1000);
+  if(sec<0)return '--';
   if(sec<60)return sec+'秒';
   if(sec<3600)return Math.floor(sec/60)+'分'+sec%60+'秒';
   return Math.floor(sec/3600)+'时'+Math.floor(sec%3600/60)+'分';

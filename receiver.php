@@ -46,6 +46,10 @@ try {
         'spd'    => $params['spd'] ?? null,
         'sat'    => $params['sat'] ?? null,
         'fix'    => $params['fix'] ?? null,
+        'csq'    => $params['csq'] ?? null,
+        'sim'    => $params['sim'] ?? null,
+        'net'    => $params['net'] ?? null,
+        'tech'   => $params['tech'] ?? null,
         'ts'     => $now,
     ]);
     echo json_encode(['status' => 'ok', 'ts' => $now]);
