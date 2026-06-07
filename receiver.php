@@ -63,5 +63,6 @@ try {
     echo json_encode(['status' => 'ok', 'ts' => $now]);
 } catch (Exception $e) {
     http_response_code(500);
-    echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
+    error_log('receiver: ' . $e->getMessage());
+    echo json_encode(['status' => 'error', 'message' => 'Internal error']);
 }
