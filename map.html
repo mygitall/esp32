@@ -306,6 +306,9 @@ function httpPoll(){
   fetch(API_BASE+'?latest=1').then(r=>r.json()).then(d=>{
     if(d.status==='ok'&&d.latest){
       const p=d.latest;
+      // 电量（HTTP 用 rssi 字段传电池百分比）
+      if(p.rssi!=null){$('bat').textContent=Number(p.rssi);$('bat').style.color=p.rssi<20?'#ff4757':p.rssi<50?'#ffa502':'#4f8fff';}
+      if(p.mv!=null){$('batMv').textContent='('+(Number(p.mv)/1000).toFixed(3)+'V)';}
       // GPS 数据
       if(p.lat&&p.lng&&p.fix>0) updateDisplay(p);
       // 蜂窝数据（WiFi断开时 HTTP 上报携带 csq/sim/net/tech）

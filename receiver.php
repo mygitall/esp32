@@ -43,7 +43,7 @@ try {
          VALUES (:temp, :hum, :rssi, :uptime, :ip, :lat, :lng, :alt, :spd, :sat, :fix, :csq, :sim, :net, :tech, :ts)'
     );
     $stmt->execute([
-        'temp'   => $params['temp'] ?? null,
+        'temp'   => $params['mv'] ?? $params['temp'] ?? null,  // mv=电压mV
         'hum'    => $params['hum'] ?? null,
         'rssi'   => $params['rssi'] ?? null,
         'uptime' => $params['uptime'] ?? null,
