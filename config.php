@@ -15,7 +15,7 @@ date_default_timezone_set('Asia/Shanghai');  // 北京时间
 // ==================== MQTT 配置 ====================
 define('MQTT_BROKER', 'broker.emqx.io');
 define('MQTT_PORT', 1883);
-define('MQTT_TOPIC', 'esp32/status');       // 订阅主题
+define('MQTT_TOPIC', 'esp32/gps');       // 订阅主题（与 ESP32 固件发布主题一致）
 define('MQTT_CLIENT_ID', 'php_sub_' . uniqid());
 define('MQTT_KEEPALIVE', 30);               // 秒
 define('MQTT_COLLECT_SECONDS', 55);         // 每次运行采集多少秒（cron 每分钟触发）

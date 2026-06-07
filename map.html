@@ -235,6 +235,7 @@
     <div class="info-item">📡 <span class="gps-bars" id="gpsBars"><span class="gps-bar g0"></span><span class="gps-bar g0"></span><span class="gps-bar g0"></span><span class="gps-bar g0"></span></span><span id="sat">--</span></div>
     <div class="info-item">⚡ 海拔 <span id="alt">--</span>m</div>
     <div class="info-item">🏃 速度 <span id="spd">--</span>km/h</div>
+    <div class="info-item">🔋 电量 <span id="bat">--</span>%</div>
     <div class="info-item">🕐 更新 <span id="ts">--</span></div>
   </div>
   <div class="info-expand">
@@ -406,7 +407,7 @@ let autoThemeTimer=setInterval(applyAutoTheme,6e4);
 setTimeout(applyAutoTheme,500);
 
 // 小车标记
-const carIcon=L.divIcon({html:'<div style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;font-size:28px;filter:drop-shadow(2px 2px 3px rgba(0,0,0,.5))">🚗</div>',iconSize:[36,36],iconAnchor:[18,18],className:''});
+const carIcon=L.icon({iconUrl:'https://www.sseeee.com/car.png',iconSize:[48,48],iconAnchor:[24,24]});
 const gpsMarker=L.marker(cachedPos,{icon:carIcon}).addTo(leafMap).bindTooltip('定位中...',{direction:'top',offset:[0,-20],className:'addr-tooltip',permanent:!0});
 
 // 精度圈
@@ -3414,6 +3415,9 @@ client.on('message',(topic,payload)=>{
   try{
     const d=JSON.parse(payload.toString());
     if(topic==='esp32/cellular'){updateCellular(d);return;}
+    // 更新电量（所有消息都可能有bat字段）
+    if(d.bat!==undefined){$('bat').textContent=d.bat;$('bat').style.color=d.bat<20?'#ff4757':d.bat<50?'#ffa502':'#4f8fff';}
+    // 定位数据
     if(d.fix>0&&d.lat&&d.lng&&(d.lat!==0||d.lng!==0)){
       updateDisplay(d);
     }
@@ -3488,6 +3492,7 @@ function updateDisplay(d){
   $('gpsWarning').style.display=sat>0?'none':'block';
   $('alt').textContent=(d.alt||0).toFixed(1);
   $('spd').textContent=(d.spd||0).toFixed(1);
+  if(d.bat!==undefined){$('bat').textContent=d.bat;$('bat').style.color=d.bat<20?'#ff4757':d.bat<50?'#ffa502':'#4f8fff';}
   $('acc').textContent=lastAcc||'--';
 }
 

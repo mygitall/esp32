@@ -21,10 +21,11 @@ $isCLI = php_sapi_name() === 'cli';
 $mode = $argv[1] ?? ($_GET['mode'] ?? 'daemon');
 
 if ($mode === 'cron') {
-    // Web 模式下先缓冲输出，避免 "headers already sent"
+    // Web 模式：缓冲杂散输出，最后清空缓冲输出纯 JSON
     if (!$isCLI) ob_start();
-    collectBriefly();
+    $saved = collectBriefly();
     if (!$isCLI) ob_clean();
+    outputResult($saved);
 } else {
     runDaemon();
 }
@@ -40,15 +41,13 @@ function collectBriefly() {
 
     if (!$client->connect(5)) {
         logLine("MQTT 连接失败");
-        outputResult(0);
-        return;
+        return $count;
     }
 
     if (!$client->subscribe(MQTT_TOPIC)) {
         logLine("订阅失败");
         $client->disconnect();
-        outputResult(0);
-        return;
+        return $count;
     }
 
     logLine("开始采集 " . MQTT_COLLECT_SECONDS . " 秒...");
@@ -66,7 +65,7 @@ function collectBriefly() {
 
     $client->disconnect();
     logLine("采集完毕，共 {$count} 条");
-    outputResult($count);
+    return $count;
 }
 
 // ========== 守护进程模式：一直运行 ==========
@@ -101,17 +100,39 @@ function runDaemon() {
 // ========== 存储 ==========
 function saveData(PDO $db, array $data) {
     try {
-        $stmt = $db->prepare(
-            'INSERT INTO sensor_data (temperature, humidity, rssi, uptime, ip, recorded_at)
-             VALUES (:temp, :hum, :rssi, :uptime, :ip, NOW())'
-        );
-        $stmt->execute([
-            'temp'  => $data['temp'] ?? null,
-            'hum'   => $data['hum'] ?? null,
-            'rssi'  => $data['rssi'] ?? null,
-            'uptime'=> $data['uptime'] ?? null,
-            'ip'    => $data['ip'] ?? null,
-        ]);
+        $hasGps = !empty($data['lat']) && !empty($data['lng']);
+        if ($hasGps) {
+            $stmt = $db->prepare(
+                'INSERT INTO sensor_data (temperature, humidity, rssi, uptime, ip, lat, lng, alt, spd, sat, fix, cell_csq, recorded_at)
+                 VALUES (:temp, :hum, :rssi, :uptime, :ip, :lat, :lng, :alt, :spd, :sat, :fix, :csq, NOW())'
+            );
+            $stmt->execute([
+                'temp'   => $data['temp'] ?? null,
+                'hum'    => $data['hum'] ?? null,
+                'rssi'   => $data['bat'] ?? $data['rssi'] ?? null,
+                'uptime' => $data['uptime'] ?? null,
+                'ip'     => $data['ip'] ?? null,
+                'lat'    => $data['lat'],
+                'lng'    => $data['lng'],
+                'alt'    => $data['alt'] ?? null,
+                'spd'    => $data['spd'] ?? null,
+                'sat'    => $data['sat'] ?? null,
+                'fix'    => $data['fix'] ?? null,
+                'csq'    => $data['csq'] ?? null,
+            ]);
+        } else {
+            $stmt = $db->prepare(
+                'INSERT INTO sensor_data (temperature, humidity, rssi, uptime, ip, recorded_at)
+                 VALUES (:temp, :hum, :rssi, :uptime, :ip, NOW())'
+            );
+            $stmt->execute([
+                'temp'   => $data['temp'] ?? null,
+                'hum'    => $data['hum'] ?? null,
+                'rssi'   => $data['bat'] ?? $data['rssi'] ?? null,
+                'uptime' => $data['uptime'] ?? null,
+                'ip'     => $data['ip'] ?? null,
+            ]);
+        }
     } catch (Exception $e) {
         logLine("DB 错误: " . $e->getMessage());
     }
@@ -123,6 +144,8 @@ function logLine($msg) {
 }
 
 function outputResult($count) {
-    header('Content-Type: application/json');
-    echo json_encode(['status' => 'ok', 'saved' => $count, 'time' => date('Y-m-d H:i:s')]);
+    if (!headers_sent()) {
+        header('Content-Type: application/json; charset=utf-8');
+    }
+    echo json_encode(['status' => 'ok', 'saved' => $count, 'time' => date('Y-m-d H:i:s')], JSON_UNESCAPED_UNICODE);
 }
