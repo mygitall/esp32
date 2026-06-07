@@ -30,6 +30,14 @@ if ($isGet && empty($params['lat']) && empty($params['lng'])) {
 try {
     $db = getDB();
     $now = date('Y-m-d H:i:s');
+
+    // 校验坐标合法性：拒绝 (0,0) 和超出中国范围的值
+    $lat = floatval($params['lat'] ?? 0);
+    $lng = floatval($params['lng'] ?? 0);
+    if (($lat === 0.0 && $lng === 0.0) || $lat < 18 || $lat > 54 || $lng < 73 || $lng > 136) {
+        echo json_encode(['status' => 'error', 'message' => 'invalid coordinates']);
+        exit;
+    }
     $stmt = $db->prepare(
         'INSERT INTO sensor_data (temperature, humidity, rssi, uptime, ip, lat, lng, alt, spd, sat, fix, cell_csq, cell_sim, cell_net, cell_tech, recorded_at)
          VALUES (:temp, :hum, :rssi, :uptime, :ip, :lat, :lng, :alt, :spd, :sat, :fix, :csq, :sim, :net, :tech, :ts)'

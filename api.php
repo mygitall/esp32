@@ -156,14 +156,18 @@ function queryData(PDO $db, array $params): array {
     if ($format === 'hourly') {
         $sql = "SELECT DATE_FORMAT(recorded_at, '%Y-%m-%d %H:00') AS ts,
                        AVG(temperature) AS temp, AVG(humidity) AS hum,
-                       AVG(rssi) AS rssi
+                       AVG(rssi) AS rssi, AVG(lat) AS lat, AVG(lng) AS lng,
+                       AVG(alt) AS alt, AVG(spd) AS spd, AVG(sat) AS sat,
+                       AVG(cell_csq) AS csq
                 FROM sensor_data
                 WHERE recorded_at BETWEEN :from AND :to
                 GROUP BY ts ORDER BY ts ASC";
     } elseif ($format === 'daily') {
         $sql = "SELECT DATE(recorded_at) AS ts,
                        AVG(temperature) AS temp, AVG(humidity) AS hum,
-                       AVG(rssi) AS rssi
+                       AVG(rssi) AS rssi, AVG(lat) AS lat, AVG(lng) AS lng,
+                       AVG(alt) AS alt, AVG(spd) AS spd, AVG(sat) AS sat,
+                       AVG(cell_csq) AS csq
                 FROM sensor_data
                 WHERE recorded_at BETWEEN :from AND :to
                 GROUP BY ts ORDER BY ts ASC";
