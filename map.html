@@ -442,13 +442,42 @@ function smoothPath(pts,subdiv){
   out.push([pts[n-1][0],pts[n-1][1]]);
   return out;
 }
-function drawTrack(){
+async function drawTrack(){
   leafMap.eachLayer(l=>{if(l._trackLine)leafMap.removeLayer(l)});
   if(traveledPath.length<2)return;
   const pts=traveledPath.map(p=>[p[0],p[1]]);
-  const smoothed=pts.length>=3?smoothPath(pts,3):pts;
+  // 路网吸附：用 OSRM 获取真实道路路径替代直线
+  let snapped=pts;
+  try{
+    snapped=await snapToRoads(pts);
+  }catch(e){}
+  const smoothed=snapped.length>=3?smoothPath(snapped,3):snapped;
   const line=L.polyline(smoothed,{color:'#4f8fff',weight:3,opacity:.7});
   line._trackLine=!0;line.addTo(leafMap);
+}
+
+let snapCache={};
+async function snapToRoads(pts){
+  if(pts.length<2)return pts;
+  const result=[pts[0]];
+  const batchSize=5; // 每批最多5个点，避免API过载
+  for(let i=0;i<pts.length-1;i+=batchSize){
+    const end=Math.min(i+batchSize,pts.length-1);
+    const coords=pts.slice(i,end+1).map(p=>p[1]+','+p[0]).join(';');
+    const key=coords.substring(0,80);
+    if(snapCache[key]){result.push(...snapCache[key]);continue;}
+    try{
+      const url=`https://router.project-osrm.org/route/v1/driving/${coords}?geometries=geojson&overview=full`;
+      const resp=await fetch(url,{signal:AbortSignal.timeout(5000)});
+      const data=await resp.json();
+      if(data.code==='Ok'&&data.routes[0]){
+        const road=data.routes[0].geometry.coordinates.map(c=>[c[1],c[0]]);
+        snapCache[key]=road.slice(1); // 去掉首点(与result最后一点重合)
+        result.push(...snapCache[key]);
+      }else{result.push(...pts.slice(i+1,end+1));}
+    }catch(e){result.push(...pts.slice(i+1,end+1));}
+  }
+  return result;
 }
 
 function normalizeGpsPoint(p){
@@ -3480,7 +3509,8 @@ function updateDisplay(d){
   if(d.sat>0||d.fix>0)try{localStorage.setItem('gps_last_pos',JSON.stringify({lat,lng,ts:Date.now()}))}catch(e){}
 
   reverseGeocode(lat,lng);
-  gpsMarker.setLatLng([lat,lng]);
+  gpsMarker.setLatLng([lat,lng]); // 锚定真实位置
+  animLat=lat;animLng=lng;lastSpdKph=p.spd||0; // 重置动画起点
   updateStoppedTime(lat,lng);
   updateHeading(lat,lng);
   accuracyCircle.setLatLng([lat,lng]);
@@ -3657,8 +3687,25 @@ setInterval(()=>{
   const t=gpsMarker.getTooltip();if(t){const s=t.getContent();if(typeof s==='string')t.setContent(s.replace(/<br>⏱.*/,'')+'<br>⏱ 停留 '+formatStopped())}
 },1000);
 
-// ============= 航向指示 =============
-let lastHeading=0,lastHeadingPos=null;
+// ============= 标记平滑移动 =============
+let lastHeading=0,lastHeadingPos=null,lastSpdKph=0;
+let animLat=null,animLng=null,animTimer=null;
+
+function startMarkerAnim(lat,lng,spd){
+  animLat=lat;animLng=lng;lastSpdKph=spd||0;
+  if(animTimer)return; // 已运行
+  animTimer=setInterval(()=>{
+    if(!animLat||lastSpdKph<0.5){return}
+    // 速度 km/h → 度/秒：1km/h ≈ 0.000009°/s（纬度方向）
+    const degPerSec=lastSpdKph/111320;
+    const headingRad=lastHeading*Math.PI/180;
+    const step=degPerSec*0.5; // 0.5秒步长
+    animLat+=Math.cos(headingRad)*step;
+    animLng+=Math.sin(headingRad)*step;
+    gpsMarker.setLatLng([animLat,animLng]);
+  },500);
+}
+
 function updateHeading(lat,lng){
   if(!lastHeadingPos){lastHeadingPos=[lat,lng];return}
   const dLat=lat-lastHeadingPos[0],dLng=lng-lastHeadingPos[1];
@@ -3671,6 +3718,7 @@ function updateHeading(lat,lng){
     const el=gpsMarker._icon.querySelector('div');
     if(el){el.style.transform='rotate('+deg+'deg)';el.style.transition='transform .6s ease-out'}
   }
+  startMarkerAnim(lat,lng,lastSpdKph);
 }
 
 // ============= 更新迷你曲线 =============
