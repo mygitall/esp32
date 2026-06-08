@@ -1,83 +1,102 @@
-# ESP32 环境监控面板
+# ESP32 GPS 追踪器 — 服务端
 
-ESP32 + DHT11 温湿度监控，MQTT 云端传输，手机 4G 远程查看 + LED 远程控制。
+实时 GPS 追踪系统的服务端代码：数据接收、存储、查询、地图展示。
 
-## 功能
+## 仓库说明
 
-- DHT11 温湿度采集，每 5 秒上报
-- MQTT 上传到云端 Broker（broker.emqx.io）
-- monitor.html 独立页面，手机浏览器直接打开查看
-- LED 远程开关控制
-- 本地 Web 仪表盘 → `http://192.168.31.141/`
-- OTA 无线升级 → 网络端口 `esp32-sensor`，密码 `12345678`
+本项目拆分为两个独立仓库：
+
+| 仓库 | 内容 | 本地路径 |
+|------|------|---------|
+| `esp32` | 服务端（PHP + HTML） | `~/Desktop/AI开发/esp32/` |
+| `esp32-gps-tracker` | 固件（.ino 草图） | `~/esp32-gps-tracker/` |
+
+## 拉取到本地
+
+```bash
+# 服务端仓库
+git clone https://github.com/mygitall/esp32.git ~/Desktop/AI开发/esp32
+
+# 固件仓库
+git clone https://github.com/mygitall/esp32-gps-tracker.git ~/esp32-gps-tracker
+```
 
 ## 文件说明
 
 ```
-sketch_may17a/
-├── sketch_may17a.ino    ← 主程序（WiFi / MQTT / Web / LED / OTA）
-├── monitor.html          ← 手机监控页面
-└── README.md
+esp32/
+├── receiver.php          ← 数据接收端点（GET 单条 + GET 批量 + POST JSON 批量）
+├── api.php               ← 数据查询 API（?latest=1 最新点，?from=...&to=... 时间范围）
+├── subscribe_daemon.php  ← MQTT 订阅守护进程（cron 模式每 1 分钟采集）
+├── mqtt_client.php       ← 纯 PHP MQTT 3.1.1 客户端（零依赖）
+├── config.php            ← 数据库连接 + MQTT 配置
+├── map.html              ← GPS 轨迹地图（Leaflet + 高德底图 + MQTT/HTTP 实时更新）
+├── setup.php             ← 数据库初始化脚本
+├── upgrade_db.php        ← 数据库迁移脚本
+└── install.sql           ← 初始 SQL 建表语句
 ```
 
-## 配置
+## 部署到服务器
 
-在 `sketch_may17a.ino` 顶部修改：
+服务器文件路径: `/esp32/mmq/`
 
-```cpp
-const char* ssid = "WIFI";         // WiFi 名称
-const char* password = "999999999"; // WiFi 密码
+FTP 上传：
+```bash
+python3 -c "
+import ftplib
+ftp = ftplib.FTP()
+ftp.connect('gao367888125.zfkwp02.guaixing.cn', 21, timeout=15)
+ftp.login('gao367888125', 'c6f57i8j')
+files = ['receiver.php','api.php','config.php','subscribe_daemon.php','mqtt_client.php','map.html']
+for f in files:
+    with open(f, 'rb') as fh:
+        ftp.storbinary(f'STOR /esp32/mmq/{f}', fh)
+    print(f'{f} uploaded')
+ftp.quit()
+"
 ```
 
-## 局域网访问
+## API 接口
 
-ESP32 连接 WiFi 后，同一局域网内的设备浏览器打开：
+### 数据查询 (api.php)
 
-```
-http://192.168.31.141/
-```
+```bash
+# 最新一条
+curl https://www.sseeee.com/esp32/mmq/api.php?latest=1
 
-即可看到本地 Web 控制面板（温湿度、LED 控制、系统状态）。
+# 按时间范围
+curl "https://www.sseeee.com/esp32/mmq/api.php?from=2026-06-08+10:00:00&to=2026-06-08+11:00:00"
 
-> IP 地址可能因路由器 DHCP 分配而变动，以串口监视器实际输出为准。
-
-## OTA 无线升级
-
-### 使用方法
-
-烧录一次后，ESP32 不需要再插 USB 数据线。
-
-**Arduino IDE：**
-
-1. ESP32 插充电头或充电宝供电
-2. 电脑连同一个 WiFi
-3. 工具 → 端口 → 选择网络端口 `esp32-sensor`
-4. 点上传，输入密码 `12345678`
-
-**Claude Code（命令行）：**
-
-直接说「帮我 OTA 升级」，自动通过 WiFi 编译上传，全程不需要 USB 线。
-
-### 原理
-
-```
-ESP32（插充电宝）──WiFi──路由器──WiFi──电脑（Arduino IDE / Claude Code）
-                                     │
-                                     └── OTA 无线烧录
+# 按天查询 + 按小时聚合
+curl "https://www.sseeee.com/esp32/mmq/api.php?date=2026-06-08&format=hourly"
 ```
 
-核心条件：ESP32 和电脑在**同一个局域网**。ESP32 插哪供电都行。
+### 数据接收 (receiver.php)
 
-## 手机远程查看
+```bash
+# 批量 GET
+curl "https://www.sseeee.com/esp32/mmq/receiver.php?batch=30.956,121.805,10,30,15,50,3875,31|30.957,121.806,11,32,15,50,3875,31"
 
-1. 打开 `monitor.html`（可部署到 PHP 虚拟主机或 GitHub Pages）
-2. 页面自动连接云端 MQTT Broker
-3. 4G / WiFi 都能查看温湿度和控制 LED
+# 批量 POST JSON
+curl -X POST "https://www.sseeee.com/esp32/mmq/receiver.php" \
+  -H "Content-Type: application/json" \
+  -d '[{"la":30.956,"lo":121.805,"al":10,"sp":30,"sa":15,"bt":50,"mv":3875,"cs":31}]'
+```
 
-## 依赖库
+### 统计
 
-- PubSubClient
-- Async_TCP (ESP32Async)
-- ESP_Async_WebServer (ESP32Async)
-- DHT sensor library
-- ArduinoOTA（ESP32 内置）
+```bash
+curl https://www.sseeee.com/esp32/mmq/receiver.php
+# → {"status":"ok","total_records":20664}
+```
+
+## 架构
+
+```
+ATGM336H GPS → ESP32 → Air780EX 4G → HTTP → receiver.php → MySQL → api.php → map.html
+                                                                     ↘ subscribe_daemon.php (MQTT 备路)
+```
+
+- HTTP 批量上报每 10 秒一次（`?batch=` 格式）
+- MQTT 守护进程作为备用数据路径（需外部 cron 每分钟触发）
+- map.html 优先用 MQTT WebSocket 实时更新，降级到 HTTP 3 秒轮询
