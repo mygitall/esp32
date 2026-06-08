@@ -20,6 +20,9 @@ date_default_timezone_set('Asia/Shanghai');
 $isCLI = php_sapi_name() === 'cli';
 $mode = $argv[1] ?? ($_GET['mode'] ?? 'daemon');
 
+// 强制 cron 模式也按最大时长采集
+define('FORCE_COLLECT_SECONDS', 58);
+
 if ($mode === 'cron') {
     // Web 模式：缓冲杂散输出，最后清空缓冲输出纯 JSON
     if (!$isCLI) ob_start();
