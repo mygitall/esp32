@@ -468,7 +468,8 @@ async function snapToRoads(pts){
     if(snapCache[key]){result.push(...snapCache[key]);continue;}
     try{
       const url=`https://router.project-osrm.org/route/v1/driving/${coords}?geometries=geojson&overview=full`;
-      const resp=await fetch(url,{signal:AbortSignal.timeout(5000)});
+      const ctrl=new AbortController();setTimeout(()=>ctrl.abort(),5000);
+      const resp=await fetch(url,{signal:ctrl.signal});
       const data=await resp.json();
       if(data.code==='Ok'&&data.routes[0]){
         const road=data.routes[0].geometry.coordinates.map(c=>[c[1],c[0]]);
@@ -494,7 +495,7 @@ function appendTrackPoint(p){
   const last=traveledPath[traveledPath.length-1];
   if(last&&Math.abs(last[0]-p.lat)<1e-7&&Math.abs(last[1]-p.lng)<1e-7)return false;
   lastTrackKey=key;
-  traveledPath.push([p.lat,p.lng,p.spd]);
+  traveledPath.push([p.lat,p.lng,p.spd,p.ts]);
   return true;
 }
 
@@ -505,7 +506,7 @@ function loadTodayTrack(){
       if(d.status!=='ok'||!Array.isArray(d.data))return;
       const pts=d.data.map(normalizeGpsPoint).filter(Boolean);
       if(!pts.length)return;
-      traveledPath=pts.map(p=>[p.lat,p.lng,p.spd]);
+      traveledPath=pts.map(p=>[p.lat,p.lng,p.spd,p.ts]);
       lastTrackKey=pts[pts.length-1].ts||'';
       drawTrack();updateMileage();
       calcStoppedFromHistory();
@@ -3511,7 +3512,7 @@ function updateDisplay(d){
   reverseGeocode(lat,lng);
   gpsMarker.setLatLng([lat,lng]); // 锚定真实位置
   animLat=lat;animLng=lng;lastSpdKph=p.spd||0; // 重置动画起点
-  updateStoppedTime(lat,lng);
+  updateStoppedTime(lat,lng,d.ts||p.ts||'');
   updateHeading(lat,lng);
   accuracyCircle.setLatLng([lat,lng]);
 
@@ -3640,7 +3641,6 @@ function drawSpeedChart(){
 let stoppedSince=0,stoppedPos=null;
 (function(){
   try{const c=JSON.parse(localStorage.getItem('stopped'));if(c&&c.since){stoppedSince=c.since;stoppedPos=c.pos}}catch(e){}
-  if(!stoppedSince)stoppedSince=Date.now();
 })();
 
 function saveStopped(since,pos){
@@ -3648,10 +3648,17 @@ function saveStopped(since,pos){
   try{localStorage.setItem('stopped',JSON.stringify({since:stoppedSince,pos:stoppedPos}))}catch(e){}
 }
 
-function updateStoppedTime(lat,lng){
+function updateStoppedTime(lat,lng,dataTs){
   if(!stoppedPos){stoppedPos=[lat,lng];return}
   const dLat=(lat-stoppedPos[0])*111320,dLng=(lng-stoppedPos[1])*111320*Math.cos(stoppedPos[0]*Math.PI/180);
-  if(Math.sqrt(dLat*dLat+dLng*dLng)>10)saveStopped(Date.now(),[lat,lng]);
+  if(Math.sqrt(dLat*dLat+dLng*dLng)>10){
+    // 只用数据时间戳，绝不用 Date.now()（避免刷新时间干扰）
+    if(dataTs&&typeof dataTs==='string'){
+      const d=Date.parse(dataTs.replace(' ','T')+'+08:00');
+      if(Number.isFinite(d)){saveStopped(d,[lat,lng]);return}
+    }
+    // 无有效时间戳则保持原值，不重置
+  }
 }
 
 // 从轨迹数据反推真实停留起始（用 traveledPath 自带的 ts 字段）
@@ -3663,15 +3670,13 @@ function calcStoppedFromHistory(){
     if(!a||!b)continue;
     const dLat=(b[0]-a[0])*111320,dLng=(b[1]-a[1])*111320*Math.cos(a[0]*Math.PI/180);
     if(Math.sqrt(dLat*dLat+dLng*dLng)>10){
-      // b 是最后一次移动后的第一个静止点，从它的时间戳开始算停留
-      const ts=a[3]; // traveledPath[i] = [lat,lng,spd,ts,rawLat,rawLng,alt,sat]
+      // b 是最后一次移动到达的点，停留从 b 的时间戳开始
+      const ts=b[3];
       if(ts&&typeof ts==='string'){
         const d=Date.parse(ts.replace(' ','T')+'+08:00');
         if(Number.isFinite(d)){saveStopped(d,[b[0],b[1]]);return}
       }
-      // ts 不可用则用当前时间
-      saveStopped(Date.now(),[b[0],b[1]]);
-      return;
+      return; // 无有效 ts 就不更新，保留上次值
     }
   }
 }
