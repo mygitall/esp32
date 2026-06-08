@@ -427,8 +427,14 @@ function smoothPath(pts,subdiv){
   const out=[],n=pts.length;
   for(let i=0;i<n-1;i++){
     const p0=pts[Math.max(0,i-1)],p1=pts[i],p2=pts[i+1],p3=pts[Math.min(n-1,i+2)];
-    for(let s=0;s<subdiv;s++){
-      const t=s/subdiv,t2=t*t,t3=t2*t;
+    // 检测急转弯 (>60°) 保留直角
+    const a1=Math.atan2(p1[0]-p0[0],p1[1]-p0[1]);
+    const a2=Math.atan2(p2[0]-p1[0],p2[1]-p1[1]);
+    let da=Math.abs(a2-a1); if(da>Math.PI)da=2*Math.PI-da;
+    const sharp=da>Math.PI/3; // >60度=急弯，不圆滑
+    const div=sharp?1:subdiv;
+    for(let s=0;s<div;s++){
+      const t=s/div,t2=t*t,t3=t2*t;
       out.push([0.5*((2*p1[0])+(-p0[0]+p2[0])*t+(2*p0[0]-5*p1[0]+4*p2[0]-p3[0])*t2+(-p0[0]+3*p1[0]-3*p2[0]+p3[0])*t3),
                 0.5*((2*p1[1])+(-p0[1]+p2[1])*t+(2*p0[1]-5*p1[1]+4*p2[1]-p3[1])*t2+(-p0[1]+3*p1[1]-3*p2[1]+p3[1])*t3)]);
     }
