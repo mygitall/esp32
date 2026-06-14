@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#f2f5fb">
+<title>ESP32 设备状态</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+
+:root{
+  --bg:#f2f5fb;--surface:rgba(255,255,255,.92);--surface2:#f7faff;
+  --border:rgba(173,191,217,.28);--text:#16202a;--text2:#627387;--text3:#95a2b3;
+  --accent:#3d7cff;--green:#12b886;--gold:#f59f00;--red:#fa5252;--warm:#ff7a45;
+  --radius:24px;--radius-sm:18px;
+}
+
+body{
+  font-family:-apple-system,'SF Pro Display','Segoe UI',sans-serif;
+  background:var(--bg);color:var(--text);
+  min-height:100vh;display:flex;justify-content:center;
+  padding:14px 14px 28px;
+  background-image:
+    radial-gradient(ellipse at top left,rgba(61,124,255,.14)0%,transparent 42%),
+    radial-gradient(ellipse at top right,rgba(255,122,69,.10)0%,transparent 38%),
+    linear-gradient(180deg,#f8fbff 0%,#f2f5fb 52%,#eef3fa 100%);
+  touch-action:manipulation;-webkit-text-size-adjust:100%;
+}
+
+
+.app{width:100%;max-width:430px}
+
+/* ---- Topbar ---- */
+.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding:2px 6px}
+.topbar h1{font-size:1.2rem;font-weight:800;letter-spacing:-0.45px;background:linear-gradient(135deg,#132033,#6d7e91);background-clip:text;-webkit-background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+.conn-badge{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.72);border:1px solid rgba(173,191,217,.22);border-radius:999px;padding:7px 13px;font-size:.72rem;color:var(--text2);backdrop-filter:blur(14px);box-shadow:0 10px 24px rgba(76,104,140,.08)}
+.conn-dot{width:8px;height:8px;border-radius:50%;background:var(--red);transition:background .4s}
+.conn-dot.live{background:var(--green);box-shadow:0 0 8px rgba(0,212,170,.4)}
+.conn-dot.loading{background:var(--gold);animation:pulse 1.2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* ---- Refresh badge ---- */
+.refresh-badge{display:flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--border);border-radius:100px;padding:6px 12px;font-size:.7rem;color:var(--text3)}
+.refresh-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:spin 2s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ---- Map ---- */
+.map-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:14px;backdrop-filter:blur(16px);box-shadow:0 22px 50px rgba(76,104,140,.10), inset 0 1px 0 rgba(255,255,255,.65)}
+.map-wrap{position:relative;height:236px}
+.map-wrap .leaflet-container{width:100%;height:100%;background:var(--surface2)}
+.map-overlay{position:absolute;top:10px;right:10px;z-index:1000}
+.map-overlay button{width:38px;height:38px;border-radius:14px;border:1px solid rgba(173,191,217,.26);background:rgba(255,255,255,.84);backdrop-filter:blur(16px);color:var(--text);font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;margin-bottom:8px;box-shadow:0 10px 24px rgba(76,104,140,.10), inset 0 1px 0 rgba(255,255,255,.7)}
+.map-overlay button:active{background:rgba(79,143,255,.2)}
+
+/* ---- GPS info row ---- */
+.gps-row{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;gap:10px}
+.gps-row+ .gps-row{border-top:1px solid var(--border)}
+.gps-item{display:flex;flex-direction:column;gap:2px}
+.gps-item .gps-label{font-size:.64rem;color:var(--text3);text-transform:uppercase;letter-spacing:1.2px}
+.gps-item .gps-value{font-size:1rem;font-weight:800;font-variant-numeric:tabular-nums}
+.gps-item .gps-value.ok{color:var(--green)}
+.gps-item .gps-value.warn{color:var(--gold)}
+.gps-item .gps-value.off{color:var(--text3)}
+.gps-item .gps-value .unit{font-size:.7rem;font-weight:400;opacity:.6}
+
+/* ---- Card ---- */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:14px;backdrop-filter:blur(16px);box-shadow:0 18px 40px rgba(76,104,140,.08), inset 0 1px 0 rgba(255,255,255,.65)}
+.card-title{font-size:.68rem;text-transform:uppercase;letter-spacing:1.8px;color:var(--text3);margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;font-weight:700}
+.history-controls{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.history-controls .full{grid-column:1 / -1}
+.history-label{display:flex;flex-direction:column;gap:6px;font-size:.72rem;color:var(--text2);font-weight:700}
+.history-input,.history-select{width:100%;border:1px solid var(--border);border-radius:14px;padding:10px 12px;background:rgba(255,255,255,.84);color:var(--text);font-size:.88rem;outline:none}
+.history-input:focus,.history-select:focus{border-color:rgba(61,124,255,.45);box-shadow:0 0 0 3px rgba(61,124,255,.08)}
+.history-actions{display:flex;gap:10px;margin-top:12px}
+.history-btn{flex:1;border:none;border-radius:14px;padding:11px 12px;background:linear-gradient(135deg,var(--accent),#6b9cff);color:#fff;font-size:.84rem;font-weight:700;cursor:pointer;box-shadow:0 12px 24px rgba(61,124,255,.22)}
+.history-btn.secondary{background:rgba(255,255,255,.9);color:var(--text2);border:1px solid var(--border);box-shadow:none}
+.history-tip{margin-top:10px;font-size:.72rem;color:var(--text3);line-height:1.5}
+.history-status{margin-top:10px;font-size:.75rem;color:var(--text2)}
+
+/* ---- Stats grid ---- */
+.stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.stat{background:linear-gradient(180deg,rgba(255,255,255,.92),rgba(247,250,255,.96));border:1px solid rgba(173,191,217,.18);border-radius:var(--radius-sm);padding:16px 12px;text-align:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.9)}
+.stat .stat-icon{font-size:1.28rem;margin-bottom:6px}
+.stat .stat-val{font-size:1.95rem;font-weight:800;line-height:1.02;letter-spacing:-.03em}
+.stat .stat-lbl{font-size:.66rem;color:var(--text3);text-transform:uppercase;letter-spacing:1.15px;margin-top:8px}
+.stat .stat-val.temp{color:var(--warm)}
+.stat .stat-val.spd{color:var(--accent)}
+.stat .stat-val.alt{color:var(--green)}
+.stat .stat-val.sat{color:var(--gold)}
+
+/* ---- Signal bars ---- */
+.sig-row{display:flex;align-items:center;gap:4px}
+.sig-bar{width:5px;border-radius:2px;background:var(--border);transition:background .3s}
+.sig-bar:nth-child(1){height:6px}.sig-bar:nth-child(2){height:10px}.sig-bar:nth-child(3){height:14px}.sig-bar:nth-child(4){height:18px}
+.sig-bar.s0{background:var(--border)}.sig-bar.s1{background:var(--red)}.sig-bar.s2{background:var(--gold)}.sig-bar.s3,.sig-bar.s4{background:var(--green)}
+
+/* ---- GPS fix indicator ---- */
+.fix-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;font-size:.72rem;font-weight:700;backdrop-filter:blur(10px)}
+.fix-badge.fix1{background:rgba(245,159,0,.12);border:1px solid rgba(245,159,0,.22);color:var(--gold)}
+.fix-badge.fix2{background:rgba(18,184,134,.12);border:1px solid rgba(18,184,134,.22);color:var(--green)}
+
+/* ---- Null badge ---- */
+.null-badge{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px 12px;font-size:.75rem;color:var(--text3);display:inline-flex;align-items:center;gap:4px}
+
+/* ---- Timestamp ---- */
+.ts-row{text-align:center;margin-top:8px;font-size:.68rem;color:var(--text3)}
+
+/* ---- Loading ---- */
+.loading-overlay{display:flex;align-items:center;justify-content:center;min-height:200px;flex-direction:column;gap:12px}
+.loading-spinner{width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-text{font-size:.84rem;color:var(--text2);font-weight:600}
+
+/* ---- Error ---- */
+.error-card{background:rgba(250,82,82,.08);border:1px solid rgba(250,82,82,.16);border-radius:24px;padding:18px;text-align:center;color:var(--red);font-size:.86rem;box-shadow:0 18px 40px rgba(76,104,140,.06)}
+
+/* ---- Footer ---- */
+.footer{text-align:center;font-size:.68rem;color:var(--text3);margin-top:10px;letter-spacing:.02em}
+.addr-tooltip{background:rgba(0,0,0,.78)!important;border:1px solid rgba(255,255,255,.2)!important;border-radius:8px!important;color:#fff!important;font-size:.8rem!important;padding:6px 12px!important;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,.3)}
+.addr-tooltip::before{border-top-color:rgba(0,0,0,.78)!important}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- 顶部 -->
+  <div class="topbar">
+    <h1>ESP32 设备状态</h1>
+    <div class="conn-badge">
+      <div class="conn-dot" id="connDot"></div>
+      <span id="connText">加载中</span>
+    </div>
+  </div>
+
+  <!-- 加载状态 -->
+  <div id="loadingOverlay">
+    <div class="map-card">
+      <div class="loading-overlay">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">正在获取最新数据...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 错误状态 -->
+  <div id="errorCard" class="error-card" style="display:none">
+    <div id="errorMsg">无法加载数据</div>
+  </div>
+
+  <!-- 内容 -->
+  <div id="content" style="display:none">
+
+    <!-- 地图 -->
+    <div class="map-card">
+      <div class="map-wrap">
+        <div id="map"></div>
+        <div class="map-overlay">
+          <button onclick="map.zoomIn()" title="放大">+</button>
+          <button onclick="map.zoomOut()" title="缩小">−</button>
+        </div>
+      </div>
+      <div class="gps-row">
+        <div class="gps-item">
+          <span class="gps-label">纬度</span>
+          <span class="gps-value" id="dispLat">--</span>
+        </div>
+        <div class="gps-item">
+          <span class="gps-label">经度</span>
+          <span class="gps-value" id="dispLng">--</span>
+        </div>
+        <div class="gps-item" id="fixWrap">
+          <span class="gps-label">GPS 定位</span>
+          <span class="fix-badge" id="fixBadge">--</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 关键指标 -->
+    <div class="card">
+      <div class="card-title">关键指标</div>
+      <div class="stats-grid">
+        <div class="stat">
+          <div class="stat-icon">🏃</div>
+          <div class="stat-val spd" id="dispSpd">--<span class="stat-lbl" style="display:block;font-size:.65rem;color:var(--text3);font-weight:400">km/h</span></div>
+          <div class="stat-lbl">速度</div>
+        </div>
+        <div class="stat">
+          <div class="stat-icon">⚡</div>
+          <div class="stat-val alt" id="dispAlt">--<span class="stat-lbl" style="display:block;font-size:.65rem;color:var(--text3);font-weight:400">m</span></div>
+          <div class="stat-lbl">海拔</div>
+        </div>
+        <div class="stat">
+          <div class="stat-icon">📡</div>
+          <div class="stat-val sat" id="dispSat">--</div>
+          <div class="stat-lbl">卫星数</div>
+        </div>
+        <div class="stat">
+          <div class="stat-icon">🔗</div>
+          <div id="dispRssi" class="stat-val" style="color:var(--text3)">
+            <div class="sig-row" style="justify-content:center">
+              <div class="sig-bar s0" id="sig1"></div>
+              <div class="sig-bar s0" id="sig2"></div>
+              <div class="sig-bar s0" id="sig3"></div>
+              <div class="sig-bar s0" id="sig4"></div>
+            </div>
+          </div>
+          <div class="stat-lbl">信号</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 环境数据 -->
+    <div class="card">
+      <div class="card-title">环境数据</div>
+      <div class="stats-grid">
+        <div class="stat">
+          <div class="stat-icon">🌡️</div>
+          <div class="stat-val temp" id="dispTemp">--</div>
+          <div class="stat-lbl">温度 °C</div>
+        </div>
+        <div class="stat">
+          <div class="stat-icon">💧</div>
+          <div class="stat-val" id="dispHum" style="color:var(--accent)">--</div>
+          <div class="stat-lbl">湿度 %</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 蜂窝数据 -->
+    <div class="card">
+      <div class="card-title">蜂窝数据</div>
+      <div class="stats-grid">
+        <div class="stat">
+          <div class="stat-icon">📱</div>
+          <div id="dispSim" class="stat-val" style="color:var(--text3);font-size:1rem;padding-top:2px">--</div>
+          <div class="stat-lbl">SIM 卡</div>
+        </div>
+        <div class="stat">
+          <div class="stat-icon">📶</div>
+          <div id="dispCsq" class="stat-val" style="color:var(--text3)">--</div>
+          <div class="stat-lbl">信号强度</div>
+        </div>
+        <div class="stat">
+          <div class="stat-icon">🌐</div>
+          <div id="dispNet" class="stat-val" style="color:var(--text3);font-size:1rem;padding-top:2px">--</div>
+          <div class="stat-lbl">网络</div>
+        </div>
+        <div class="stat">
+          <div class="stat-icon">📡</div>
+          <div id="dispTech" class="stat-val" style="color:var(--text3);font-size:1rem;padding-top:2px">--</div>
+          <div class="stat-lbl">制式</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 轨迹回放 -->
+    <div class="card">
+      <div class="card-title">轨迹回放</div>
+      <div class="history-controls">
+        <label class="history-label full">查询方式
+          <select id="historyMode" class="history-select" onchange="handleHistoryModeChange()">
+            <option value="today">今天</option>
+            <option value="date">指定日期</option>
+            <option value="timerange">时间段</option>
+            <option value="7days">最近7天</option>
+          </select>
+        </label>
+        <label class="history-label">日期
+          <input id="historyDate" class="history-input" type="date">
+        </label>
+        <label class="history-label">格式
+          <select id="historyFormat" class="history-select">
+            <option value="points">points</option>
+            <option value="hourly">hourly</option>
+          </select>
+        </label>
+        <label class="history-label">开始时间
+          <input id="historyFrom" class="history-input" type="time" value="08:00">
+        </label>
+        <label class="history-label">结束时间
+          <input id="historyTo" class="history-input" type="time" value="18:00">
+        </label>
+      </div>
+      <div class="history-actions">
+        <button class="history-btn" onclick="loadHistoryTrack()">加载轨迹</button>
+        <button class="history-btn secondary" onclick="clearHistoryTrack()">清除轨迹</button>
+      </div>
+      <div class="history-status" id="historyStatus">可查询今天、指定日期、时间段、最近7天。</div>
+      <div class="history-tip">示例：今天 `?range=today`，指定日期 `?date=2026-06-06`，时间段 `?date=2026-06-06&from=08:00&to=18:00`，最近7天 `?range=7days&format=hourly`。</div>
+    </div>
+
+    <!-- 更新时间 -->
+    <div class="ts-row" id="dispTs">--</div>
+  </div>
+
+  <div class="footer">自动刷新 · 间隔 5 秒</div>
+</div>
+
+<script>
+// ============ 配置 ============
+const API_BASE = 'https://www.sseeee.com/esp32/mmq/api.php';
+const REFRESH_MS = 5000;
+
+const $ = id => document.getElementById(id);
+
+// ============ 地图 ============
+let map = null;
+let marker = null;
+let circle = null;
+let historyLine = null;
+let historyMarkers = [];
+let lastGeoLat = 0;
+let lastGeoLng = 0;
+let lastRoadName = '定位中...';
+
+function outOfChina(lat, lng) {
+  return lng < 72.004 || lng > 137.8347 || lat < 0.8293 || lat > 55.8271;
+}
+
+function transformLat(x, y) {
+  let ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+  ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+  ret += (20.0 * Math.sin(y * Math.PI) + 40.0 * Math.sin(y / 3.0 * Math.PI)) * 2.0 / 3.0;
+  ret += (160.0 * Math.sin(y / 12.0 * Math.PI) + 320.0 * Math.sin(y * Math.PI / 30.0)) * 2.0 / 3.0;
+  return ret;
+}
+
+function transformLng(x, y) {
+  let ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+  ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+  ret += (20.0 * Math.sin(x * Math.PI) + 40.0 * Math.sin(x / 3.0 * Math.PI)) * 2.0 / 3.0;
+  ret += (150.0 * Math.sin(x / 12.0 * Math.PI) + 300.0 * Math.sin(x / 30.0 * Math.PI)) * 2.0 / 3.0;
+  return ret;
+}
+
+function wgs2gcj(lat, lng) {
+  if (outOfChina(lat, lng)) {
+    return [lat, lng];
+  }
+
+  const PI = Math.PI;
+  const a = 6378245.0;
+  const ee = 0.00669342162296594323;
+  let dLat = transformLat(lng - 105.0, lat - 35.0);
+  let dLng = transformLng(lng - 105.0, lat - 35.0);
+  const radLat = lat / 180.0 * PI;
+  let magic = 1 - ee * Math.sin(radLat) * Math.sin(radLat);
+  const sqrtMagic = Math.sqrt(magic);
+  dLat = (dLat * 180.0) / (a * (1 - ee) / (magic * sqrtMagic) * PI);
+  dLng = (dLng * 180.0) / (a / sqrtMagic * Math.cos(radLat) * PI);
+  return [lat + dLat, lng + dLng];
+}
+
+function normalizeGpsPoint(p) {
+  const lat = Number(p.lat);
+  const lng = Number(p.lng);
+  const fix = Number(p.fix || 0);
+
+  if (!lat || !lng || lat === 0 || lng === 0 || fix <= 0) {
+    return null;
+  }
+
+  const [gcjLat, gcjLng] = wgs2gcj(lat, lng);
+  return {
+    rawLat: lat,
+    rawLng: lng,
+    lat: gcjLat,
+    lng: gcjLng,
+    fix,
+  };
+}
+
+function buildMarkerIcon() {
+  return L.divIcon({
+    className: '',
+    html: `<div style="
+      width:40px;height:40px;border-radius:50% 50% 50% 0;
+      background:rgba(79,143,255,.9);transform:rotate(-45deg);
+      border:3px solid #fff;box-shadow:0 4px 16px rgba(79,143,255,.5);
+      position:relative;">
+      <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(45deg);font-size:16px;">📍</div>
+    </div>`,
+    iconSize: [40, 40],
+    iconAnchor: [20, 40],
+  });
+}
+
+function ensureMarkerTooltip() {
+  if (!marker) return;
+  if (!marker.getTooltip()) {
+    marker.bindTooltip(lastRoadName, {
+      direction: 'top',
+      offset: [0, -24],
+      className: 'addr-tooltip',
+      permanent: true,
+    });
+  } else {
+    marker.setTooltipContent(lastRoadName);
+  }
+}
+
+async function reverseGeocode(point) {
+  if (!point) return;
+  if (Math.abs(point.lat - lastGeoLat) < 5e-4 && Math.abs(point.lng - lastGeoLng) < 5e-4) return;
+
+  lastGeoLat = point.lat;
+  lastGeoLng = point.lng;
+
+  try {
+    const res = await fetch(API_BASE + '?geo=1&lat=' + point.lat + '&lng=' + point.lng);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.status !== 'ok') return;
+
+    const road = data.road || '';
+    const num = data.number || '';
+    const district = data.district || '';
+    const city = data.city || '';
+    const state = data.state || '';
+    const roadLine = road ? (road + num) : (data.display || '未知位置');
+    const areaLine = [state, city, district].filter(Boolean).join('');
+    lastRoadName = areaLine ? `<b>${roadLine}</b><br><small>${areaLine}</small>` : `<b>${roadLine}</b>`;
+    ensureMarkerTooltip();
+  } catch (err) {
+  }
+}
+
+function initMap(point) {
+  if (map) {
+    map.remove();
+    map = null;
+  }
+  map = L.map('map', {
+    center: [point.lat, point.lng],
+    zoom: 17,
+    attributionControl: false,
+    zoomControl: false,
+  });
+
+  L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
+    subdomains: '1234',
+    maxZoom: 18,
+  }).addTo(map);
+
+  marker = L.marker([point.lat, point.lng], { icon: buildMarkerIcon() }).addTo(map);
+  ensureMarkerTooltip();
+}
+
+function updateMap(point) {
+  if (!map) {
+    initMap(point);
+  } else {
+    map.setView([point.lat, point.lng], 17);
+    if (marker) {
+      marker.setLatLng([point.lat, point.lng]);
+      ensureMarkerTooltip();
+    } else {
+      marker = L.marker([point.lat, point.lng], { icon: buildMarkerIcon() }).addTo(map);
+      ensureMarkerTooltip();
+    }
+  }
+}
+
+function handleHistoryModeChange() {
+  const mode = $('historyMode').value;
+  $('historyDate').disabled = mode === 'today' || mode === '7days';
+  $('historyFrom').disabled = mode !== 'timerange';
+  $('historyTo').disabled = mode !== 'timerange';
+  $('historyFormat').disabled = mode === 'today';
+  if (mode === '7days') {
+    $('historyFormat').value = 'hourly';
+  } else if ($('historyFormat').value === 'hourly') {
+    $('historyFormat').value = 'points';
+  }
+}
+
+function buildHistoryQuery() {
+  const mode = $('historyMode').value;
+  const date = $('historyDate').value;
+  const from = $('historyFrom').value;
+  const to = $('historyTo').value;
+  const format = $('historyFormat').value;
+  const params = new URLSearchParams();
+
+  if (mode === 'today') {
+    params.set('range', 'today');
+  } else if (mode === 'date') {
+    params.set('date', date);
+    if (format) params.set('format', format);
+  } else if (mode === 'timerange') {
+    params.set('date', date);
+    params.set('from', from);
+    params.set('to', to);
+    if (format) params.set('format', format);
+  } else if (mode === '7days') {
+    params.set('range', '7days');
+    params.set('format', format || 'hourly');
+  }
+
+  return API_BASE + '?' + params.toString();
+}
+
+function clearHistoryTrack() {
+  if (historyLine && map) {
+    map.removeLayer(historyLine);
+    historyLine = null;
+  }
+  historyMarkers.forEach(layer => map && map.removeLayer(layer));
+  historyMarkers = [];
+  $('historyStatus').textContent = '轨迹已清除。';
+}
+
+function extractHistoryPoints(payload) {
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.points)) return payload.points;
+  if (Array.isArray(payload)) return payload;
+  return [];
+}
+
+function normalizeHistoryPoint(p) {
+  const lat = Number(p.lat ?? p.latitude);
+  const lng = Number(p.lng ?? p.lon ?? p.longitude);
+  if (!lat || !lng) return null;
+  const [gcjLat, gcjLng] = wgs2gcj(lat, lng);
+  return {
+    rawLat: lat,
+    rawLng: lng,
+    lat: gcjLat,
+    lng: gcjLng,
+    ts: p.ts || p.time || p.datetime || '',
+  };
+}
+
+function renderHistoryTrack(points) {
+  clearHistoryTrack();
+  if (!map || !points.length) return;
+
+  const latlngs = points.map(p => [p.lat, p.lng]);
+  historyLine = L.polyline(latlngs, {
+    color: '#ff7a45',
+    weight: 4,
+    opacity: 0.88,
+  }).addTo(map);
+
+  const start = points[0];
+  const end = points[points.length - 1];
+  const startMarker = L.circleMarker([start.lat, start.lng], {
+    radius: 6,
+    color: '#12b886',
+    fillColor: '#12b886',
+    fillOpacity: 1,
+    weight: 2,
+  }).bindTooltip('起点', { permanent: false, direction: 'top' }).addTo(map);
+  const endMarker = L.circleMarker([end.lat, end.lng], {
+    radius: 6,
+    color: '#fa5252',
+    fillColor: '#fa5252',
+    fillOpacity: 1,
+    weight: 2,
+  }).bindTooltip('终点', { permanent: false, direction: 'top' }).addTo(map);
+  historyMarkers = [startMarker, endMarker];
+
+  map.fitBounds(historyLine.getBounds(), { padding: [24, 24] });
+}
+
+async function loadHistoryTrack() {
+  try {
+    const url = buildHistoryQuery();
+    $('historyStatus').textContent = '轨迹加载中...';
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const json = await res.json();
+    if (json.status && json.status !== 'ok') throw new Error(json.message || '轨迹数据错误');
+
+    const points = extractHistoryPoints(json).map(normalizeHistoryPoint).filter(Boolean);
+    if (!points.length) {
+      clearHistoryTrack();
+      $('historyStatus').textContent = '该条件下没有轨迹点。';
+      return;
+    }
+
+    if (!map) {
+      initMap(points[points.length - 1]);
+    }
+    renderHistoryTrack(points);
+    $('historyStatus').textContent = `已加载 ${points.length} 个轨迹点。`;
+  } catch (err) {
+    $('historyStatus').textContent = '轨迹加载失败：' + err.message;
+  }
+}
+
+// ============ 信号格 ============
+function updateSigBars(csq) {
+  const bars = ['sig1','sig2','sig3','sig4'];
+  const level = csq === null ? -1 : csq >= 25 ? 4 : csq >= 18 ? 3 : csq >= 12 ? 2 : csq >= 6 ? 1 : 0;
+  bars.forEach((id, i) => {
+    const el = $(id);
+    if (!el) return;
+    el.className = 'sig-bar s' + (i < level ? Math.min(level, 4) : 0);
+  });
+}
+
+// ============ 渲染数据 ============
+function renderData(p) {
+  const point = normalizeGpsPoint(p);
+  const isFix = !!point;
+
+  // 地图
+  if (point) {
+    updateMap(point);
+    reverseGeocode(point);
+    $('dispLat').textContent = point.rawLat.toFixed(6);
+    $('dispLat').className = 'gps-value ok';
+    $('dispLng').textContent = point.rawLng.toFixed(6);
+    $('dispLng').className = 'gps-value ok';
+  } else {
+    $('dispLat').textContent = '--';
+    $('dispLat').className = 'gps-value off';
+    $('dispLng').textContent = '--';
+    $('dispLng').className = 'gps-value off';
+  }
+
+  // GPS fix
+  const fixBadge = $('fixBadge');
+  if (p.fix === null || p.fix === undefined) {
+    fixBadge.textContent = '无数据';
+    fixBadge.className = 'fix-badge';
+  } else if (p.fix >= 2) {
+    fixBadge.textContent = '✅ RTK/2D';
+    fixBadge.className = 'fix-badge fix2';
+  } else if (p.fix === 1) {
+    fixBadge.textContent = '⏳ GPS 定位中';
+    fixBadge.className = 'fix-badge fix1';
+  } else {
+    fixBadge.textContent = '❌ 无定位';
+    fixBadge.className = 'fix-badge';
+  }
+
+  // 速度
+  if (p.spd !== null && p.spd !== undefined) {
+    $('dispSpd').innerHTML = p.spd.toFixed(1) + '<span class="stat-lbl" style="display:block;font-size:.65rem;color:var(--text3);font-weight:400">km/h</span>';
+  } else {
+    $('dispSpd').innerHTML = '--<span class="stat-lbl" style="display:block;font-size:.65rem;color:var(--text3);font-weight:400">km/h</span>';
+  }
+
+  // 海拔
+  if (p.alt !== null && p.alt !== undefined) {
+    $('dispAlt').innerHTML = p.alt.toFixed(1) + '<span class="stat-lbl" style="display:block;font-size:.65rem;color:var(--text3);font-weight:400">m</span>';
+  } else {
+    $('dispAlt').innerHTML = '--<span class="stat-lbl" style="display:block;font-size:.65rem;color:var(--text3);font-weight:400">m</span>';
+  }
+
+  // 卫星
+  if (p.sat !== null && p.sat !== undefined) {
+    const sat = Number(p.sat);
+    $('dispSat').textContent = sat;
+    $('dispSat').style.color = sat >= 10 ? 'var(--gold)' : sat >= 5 ? 'var(--accent)' : 'var(--red)';
+  } else {
+    $('dispSat').textContent = '--';
+    $('dispSat').style.color = 'var(--text3)';
+  }
+
+  // 温度
+  if (p.temp !== null && p.temp !== undefined) {
+    $('dispTemp').textContent = p.temp.toFixed(1);
+  } else {
+    $('dispTemp').textContent = '--';
+  }
+
+  // 湿度
+  if (p.hum !== null && p.hum !== undefined) {
+    $('dispHum').textContent = p.hum.toFixed(0);
+  } else {
+    $('dispHum').textContent = '--';
+  }
+
+  // SIM
+  $('dispSim').textContent = p.sim || '--';
+  $('dispSim').style.color = p.sim ? 'var(--green)' : 'var(--text3)';
+
+  // CSQ
+  if (p.csq !== null && p.csq !== undefined) {
+    $('dispCsq').textContent = p.csq + ' dBm';
+    $('dispCsq').style.color = Number(p.csq) >= -75 ? 'var(--green)' : Number(p.csq) >= -95 ? 'var(--gold)' : 'var(--red)';
+    updateSigBars(Number(p.csq));
+  } else {
+    $('dispCsq').textContent = '--';
+    $('dispCsq').style.color = 'var(--text3)';
+    updateSigBars(null);
+  }
+
+  // 网络
+  $('dispNet').textContent = p.net || '--';
+
+  // 制式
+  $('dispTech').textContent = p.tech || '--';
+
+  // 时间戳
+  $('dispTs').textContent = p.ts ? '🕐 更新时间: ' + p.ts : '--';
+}
+
+// ============ 加载数据 ============
+async function loadData() {
+  $('connDot').classList.remove('live');
+  $('connDot').classList.add('loading');
+  $('connText').textContent = '刷新中';
+
+  try {
+    const res = await fetch(API_BASE + '?latest=1');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const json = await res.json();
+
+    if (json.status !== 'ok' || !json.latest) {
+      throw new Error('数据格式错误');
+    }
+
+    $('loadingOverlay').style.display = 'none';
+    $('errorCard').style.display = 'none';
+    $('content').style.display = 'block';
+
+    renderData(json.latest);
+
+    $('connDot').classList.remove('loading');
+    $('connDot').classList.add('live');
+    $('connText').textContent = '已连接';
+
+  } catch (err) {
+    $('loadingOverlay').style.display = 'none';
+    $('content').style.display = 'none';
+    $('errorCard').style.display = 'block';
+    $('errorMsg').textContent = '加载失败: ' + err.message;
+    $('connDot').classList.remove('loading');
+    $('connDot').classList.remove('live');
+    $('connText').textContent = '离线';
+  }
+}
+
+// ============ 启动 ============
+$('historyDate').value = new Date().toISOString().slice(0, 10);
+handleHistoryModeChange();
+loadData();
+setInterval(loadData, REFRESH_MS);
+</script>
+</body>
+</html>

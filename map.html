@@ -237,6 +237,7 @@
     <div class="info-item">🏃 速度 <span id="spd">--</span>km/h</div>
     <div class="info-item">🔋 电量 <span id="bat">--</span>% <span id="batMv" style="font-size:.65rem;color:var(--text3)"></span></div>
     <div class="info-item">🕐 更新 <span id="ts">--</span></div>
+	    <div class="info-item">📶 设备 <span id="devStatus" style="color:#ff4757">离线</span></div>
   </div>
   <div class="info-expand">
     <div class="mileage" id="mileage">📏 今日里程: 0.00 km</div>
@@ -306,6 +307,11 @@ function httpPoll(){
   fetch(API_BASE+'?latest=1').then(r=>r.json()).then(d=>{
     if(d.status==='ok'&&d.latest){
       const p=d.latest;
+      // 设备在线状态：数据超过2分钟算离线
+      const ts=new Date(p.ts.replace(' ','T')+'+08:00');
+      const offline=Date.now()-ts>120000;
+      $('devStatus').textContent=offline?'离线':'在线';
+      $('devStatus').style.color=offline?'#ff4757':'#00d4aa';
       // 电量（HTTP 用 rssi 字段传电池百分比）
       if(p.rssi!=null){$('bat').textContent=Number(p.rssi);$('bat').style.color=p.rssi<20?'#ff4757':p.rssi<50?'#ffa502':'#4f8fff';}
       if(p.mv!=null){$('batMv').textContent='('+(Number(p.mv)/1000).toFixed(3)+'V)';}
@@ -324,6 +330,7 @@ let cachedPos=null;
 try{const c=JSON.parse(localStorage.getItem('gps_last_pos'));if(c&&c.lat)cachedPos=[c.lat,c.lng]}catch(e){}
 if(!cachedPos)cachedPos=[35.86,104.19]; // 中国中心，仅无缓存时兜底
 const leafMap=L.map('map',{center:cachedPos,zoom:cachedPos[0]>34?5:15,attributionControl:!1,zoomControl:!1});
+L.control.scale({metric:true,imperial:false,position:'bottomright'}).addTo(leafMap);
 let firstFixDone=!1;
 
 // 高德底图（默认浅色，避免加载暗色再切换的闪烁）
@@ -442,43 +449,13 @@ function smoothPath(pts,subdiv){
   out.push([pts[n-1][0],pts[n-1][1]]);
   return out;
 }
-async function drawTrack(){
+function drawTrack(){
   leafMap.eachLayer(l=>{if(l._trackLine)leafMap.removeLayer(l)});
   if(traveledPath.length<2)return;
   const pts=traveledPath.map(p=>[p[0],p[1]]);
-  // 路网吸附：用 OSRM 获取真实道路路径替代直线
-  let snapped=pts;
-  try{
-    snapped=await snapToRoads(pts);
-  }catch(e){}
-  const smoothed=snapped.length>=3?smoothPath(snapped,3):snapped;
+  const smoothed=pts.length>=3?smoothPath(pts,3):pts;
   const line=L.polyline(smoothed,{color:'#4f8fff',weight:3,opacity:.7});
   line._trackLine=!0;line.addTo(leafMap);
-}
-
-let snapCache={};
-async function snapToRoads(pts){
-  if(pts.length<2)return pts;
-  const result=[pts[0]];
-  const batchSize=5; // 每批最多5个点，避免API过载
-  for(let i=0;i<pts.length-1;i+=batchSize){
-    const end=Math.min(i+batchSize,pts.length-1);
-    const coords=pts.slice(i,end+1).map(p=>p[1]+','+p[0]).join(';');
-    const key=coords.substring(0,80);
-    if(snapCache[key]){result.push(...snapCache[key]);continue;}
-    try{
-      const url=`https://router.project-osrm.org/route/v1/driving/${coords}?geometries=geojson&overview=full`;
-      const ctrl=new AbortController();setTimeout(()=>ctrl.abort(),5000);
-      const resp=await fetch(url,{signal:ctrl.signal});
-      const data=await resp.json();
-      if(data.code==='Ok'&&data.routes[0]){
-        const road=data.routes[0].geometry.coordinates.map(c=>[c[1],c[0]]);
-        snapCache[key]=road.slice(1); // 去掉首点(与result最后一点重合)
-        result.push(...snapCache[key]);
-      }else{result.push(...pts.slice(i+1,end+1));}
-    }catch(e){result.push(...pts.slice(i+1,end+1));}
-  }
-  return result;
 }
 
 function normalizeGpsPoint(p){
@@ -3439,18 +3416,16 @@ function centerOnMarker(){
 // ============= 相对时间 =============
 function updateRelativeTime(){
   if(!lastUpdate)return;
-  const elapsed=Math.floor((Date.now()-lastUpdate)/1e3);
-  let txt;
-  if(elapsed<10)txt='刚刚';
-  else if(elapsed<60)txt=elapsed+'秒前';
-  else if(elapsed<3600)txt=Math.floor(elapsed/60)+'分钟前';
-  else txt=Math.floor(elapsed/3600)+'小时前';
+  const d=new Date(lastUpdate);
+  const pad=n=>String(n).padStart(2,'0');
+  const txt=d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
   $('ts').textContent=txt;
 }
 
 // ============= 数据更新 =============
 client.on('message',(topic,payload)=>{
   lastDataTime=Date.now();
+  $('devStatus').textContent='在线';$('devStatus').style.color='#00d4aa';
   try{
     const d=JSON.parse(payload.toString());
     if(topic==='esp32/cellular'){updateCellular(d);return;}
@@ -3637,16 +3612,9 @@ function drawSpeedChart(){
   ctx.fillText(maxSpd.toFixed(0)+' km/h',4,10);
 }
 
-// ============= 停留时间 =============
+// ============= 停留时间（纯服务端计算，不依赖本地缓存）=============
 let stoppedSince=0,stoppedPos=null;
-(function(){
-  try{const c=JSON.parse(localStorage.getItem('stopped'));if(c&&c.since){stoppedSince=c.since;stoppedPos=c.pos}}catch(e){}
-})();
-
-function saveStopped(since,pos){
-  stoppedSince=since;stoppedPos=pos;
-  try{localStorage.setItem('stopped',JSON.stringify({since:stoppedSince,pos:stoppedPos}))}catch(e){}
-}
+function saveStopped(since,pos){stoppedSince=since;stoppedPos=pos;}
 
 function updateStoppedTime(lat,lng,dataTs){
   if(!stoppedPos){stoppedPos=[lat,lng];return}
@@ -3670,18 +3638,25 @@ function calcStoppedFromHistory(){
     if(!a||!b)continue;
     const dLat=(b[0]-a[0])*111320,dLng=(b[1]-a[1])*111320*Math.cos(a[0]*Math.PI/180);
     if(Math.sqrt(dLat*dLat+dLng*dLng)>10){
-      // b 是最后一次移动到达的点，停留从 b 的时间戳开始
       const ts=b[3];
       if(ts&&typeof ts==='string'){
         const d=Date.parse(ts.replace(' ','T')+'+08:00');
         if(Number.isFinite(d)){saveStopped(d,[b[0],b[1]]);return}
       }
-      return; // 无有效 ts 就不更新，保留上次值
+      return;
     }
+  }
+  // 兜底：所有点都静止，用最后一条数据的时间戳
+  const last=traveledPath[traveledPath.length-1];
+  const ts=last[3];
+  if(ts&&typeof ts==='string'){
+    const d=Date.parse(ts.replace(' ','T')+'+08:00');
+    if(Number.isFinite(d)){saveStopped(d,[last[0],last[1]]);}
   }
 }
 
 function formatStopped(){
+  if(!stoppedSince)return '加载中...';
   const sec=Math.floor((Date.now()-stoppedSince)/1000);
   if(sec<0)return '--';
   if(sec<60)return sec+'秒';
