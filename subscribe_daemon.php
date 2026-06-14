@@ -103,7 +103,10 @@ function runDaemon() {
 // ========== 存储 ==========
 function saveData(PDO $db, array $data) {
     try {
-        $hasGps = !empty($data['lat']) && !empty($data['lng']);
+        $lat = isset($data['lat']) ? (float)$data['lat'] : 0.0;
+        $lng = isset($data['lng']) ? (float)$data['lng'] : 0.0;
+        $fix = isset($data['fix']) ? (int)$data['fix'] : 0;
+        $hasGps = isRealGpsPoint($lat, $lng, $fix);
         if ($hasGps) {
             $stmt = $db->prepare(
                 'INSERT INTO sensor_data (temperature, humidity, rssi, uptime, ip, lat, lng, alt, spd, sat, fix, cell_csq, recorded_at)
@@ -115,15 +118,20 @@ function saveData(PDO $db, array $data) {
                 'rssi'   => $data['bat'] ?? $data['rssi'] ?? null,
                 'uptime' => $data['uptime'] ?? null,
                 'ip'     => $data['ip'] ?? null,
-                'lat'    => $data['lat'],
-                'lng'    => $data['lng'],
+                'lat'    => $lat,
+                'lng'    => $lng,
                 'alt'    => $data['alt'] ?? null,
                 'spd'    => $data['spd'] ?? null,
                 'sat'    => $data['sat'] ?? null,
-                'fix'    => $data['fix'] ?? null,
+                'fix'    => 1,
                 'csq'    => $data['csq'] ?? null,
             ]);
         } else {
+            if (!array_key_exists('temp', $data) && !array_key_exists('hum', $data)
+                && !array_key_exists('rssi', $data) && !array_key_exists('uptime', $data)
+                && !array_key_exists('ip', $data)) {
+                return;
+            }
             $stmt = $db->prepare(
                 'INSERT INTO sensor_data (temperature, humidity, rssi, uptime, ip, recorded_at)
                  VALUES (:temp, :hum, :rssi, :uptime, :ip, NOW())'
@@ -151,4 +159,11 @@ function outputResult($count) {
         header('Content-Type: application/json; charset=utf-8');
     }
     echo json_encode(['status' => 'ok', 'saved' => $count, 'time' => date('Y-m-d H:i:s')], JSON_UNESCAPED_UNICODE);
+}
+
+function isRealGpsPoint(float $lat, float $lng, int $fix): bool {
+    return $fix === 1
+        && !($lat === 0.0 && $lng === 0.0)
+        && $lat >= 18 && $lat <= 54
+        && $lng >= 73 && $lng <= 136;
 }

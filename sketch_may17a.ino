@@ -25,7 +25,9 @@ HardwareSerial gpsSerial(2);
 float gpsLat = 0, gpsLng = 0, gpsAlt = 0, gpsSpd = 0;
 int gpsSat = 0, gpsFix = 0;
 const unsigned long GPS_INTERVAL = 5000; // 每 5 秒更新一次 GPS
+const unsigned long GPS_STALE_MS = 15000; // 超过 15 秒无新 GPS，停止上报旧坐标
 unsigned long lastGpsPublish = 0;
+unsigned long gpsLastFixMs = 0;
 
 // Air780EX 4G 网络（UART1: GPIO4=RX, GPIO5=TX, PWRKEY=GPIO13）
 #define USE_AIR780EX
@@ -59,14 +61,24 @@ const unsigned long CELLULAR_INTERVAL = 30000;  // 每 30 秒上报蜂窝状态
 unsigned long lastCellularPublish = 0;
 
 // HTTP POST 上报（存入 PHP 虚拟主机 MySQL）
-const char* HTTP_REPORT_URL = "https://www.sseeee.com/esp32/mmq/receiver.php";
-const char* CMD_POLL_URL = "https://www.sseeee.com/esp32/mmq/cmd_api.php?esp=1";
+const char* HTTP_REPORT_URL = "https://shangdy.duckdns.org/gps/receiver.php";
+const char* CMD_POLL_URL = "https://shangdy.duckdns.org/gps/cmd_api.php?esp=1";
 
 // Air780EX 4G 上报配置（联通）
 const char* CELLULAR_APN = "UNINET";
-const char* CELLULAR_REPORT_URL = "http://www.sseeee.com/esp32/mmq/receiver.php";
+const char* CELLULAR_REPORT_URL = "http://shangdy.duckdns.org/gps/receiver.php";
 bool cellularReady = false;
 unsigned long lastCellularSetup = 0;
+
+// Air780EX 4G 远程 OTA（设备主动拉取，适合运营商 NAT 下的 4G 网络）
+const char* FW_VERSION = "2026.06.14.14";
+const char* CELLULAR_OTA_MANIFEST_URL = "http://167.179.110.113/gps/ota/manifest.txt";
+const unsigned long CELLULAR_OTA_INITIAL_DELAY = 60000;       // 开机 1 分钟后再检查
+const unsigned long CELLULAR_OTA_CHECK_INTERVAL = 120000;     // 每 2 分钟检查一次
+const int CELLULAR_OTA_CHUNK_SIZE = 512;                      // 小块写入，降低串口丢包风险
+unsigned long lastCellularOtaCheck = 0;
+String otaStatus = "idle";
+
 // 蜂窝状态缓存（publishCellularStatus 更新，publishSensorData 携带到HTTP上报）
 int cachedCsq = 99;
 String cachedSim = "unknown";
@@ -87,6 +99,7 @@ unsigned long lastWxAlert = 0;
 #include <PubSubClient.h>
 #include <HTTPClient.h>
 #include <ArduinoOTA.h>
+#include <Update.h>
 #ifdef USE_DHT
 #include <DHT.h>
 #endif
@@ -118,6 +131,9 @@ unsigned long lastMqttPublish = 0;
 
 #ifdef USE_GPS
 void readGPS();
+#endif
+#ifdef USE_AIR780EX
+void checkCellularOta();
 #endif
 
 // ==================== 网页界面（HTML/CSS/JS） ====================
@@ -838,6 +854,28 @@ void setupRoutes() {
     request->send(200, "application/json", response);
   });
 
+#ifdef USE_AIR780EX
+  // 手动触发一次 4G OTA 检查，便于现场诊断 Air780EX 拉取 manifest 的失败点。
+  server.on("/api/ota", HTTP_GET, [](AsyncWebServerRequest *request) {
+    String action = request->hasParam("action") ? request->getParam("action")->value() : "";
+    if (action == "check") {
+      lastCellularOtaCheck = millis();
+      if (!cellularReady) lastCellularSetup = 0;
+      checkCellularOta();
+    }
+
+    String response = "{"
+      "\"fw\":\"" + String(FW_VERSION) + "\","
+      "\"ota\":\"" + otaStatus + "\","
+      "\"cellular\":" + String(cellularReady ? "true" : "false") + ","
+      "\"csq\":" + String(cachedCsq) + ","
+      "\"sim\":\"" + cachedSim + "\","
+      "\"net\":\"" + cachedNet + "\""
+      "}";
+    request->send(200, "application/json", response);
+  });
+#endif
+
   // 温湿度
   server.on("/api/sensor", HTTP_GET, [](AsyncWebServerRequest *request) {
 #ifdef USE_DHT
@@ -1020,6 +1058,7 @@ bool setupCellular() {
     airAtReady = probeAir780At(115200) || probeAir780At(9600);
     if (!airAtReady) {
       Serial.println("Air780EX 4G 不可用：GPIO4/GPIO5 没收到 AT 响应");
+      otaStatus = "air_no_at";
       return false;
     }
   }
@@ -1030,23 +1069,37 @@ bool setupCellular() {
   lastCellularSetup = now;
 
   Serial.println("初始化 Air780EX 4G 网络...");
-  if (!airCommandOk("AT", 1000)) return false;
+  if (!airCommandOk("AT", 1000)) {
+    otaStatus = "at_fail";
+    return false;
+  }
 
   String sim = airCommand("AT+CPIN?", 1500);
   if (sim.indexOf("READY") < 0) {
     Serial.println("SIM 卡未就绪");
+    otaStatus = "sim_not_ready";
     return false;
   }
 
   airCommand("AT+CGATT?", 2000);
   airCommandOk("AT+SAPBR=0,1", 3000); // 已激活时可能返回错误，忽略
-  if (!airCommandOk("AT+SAPBR=3,1,\"CONTYPE\",\"GPRS\"", 1500)) return false;
-  if (!airCommandOk(String("AT+SAPBR=3,1,\"APN\",\"") + CELLULAR_APN + "\"", 1500)) return false;
-  if (!airCommandOk("AT+SAPBR=1,1", 10000)) return false;
+  if (!airCommandOk("AT+SAPBR=3,1,\"CONTYPE\",\"GPRS\"", 1500)) {
+    otaStatus = "sapbr_contype";
+    return false;
+  }
+  if (!airCommandOk(String("AT+SAPBR=3,1,\"APN\",\"") + CELLULAR_APN + "\"", 1500)) {
+    otaStatus = "sapbr_apn";
+    return false;
+  }
+  if (!airCommandOk("AT+SAPBR=1,1", 10000)) {
+    otaStatus = "sapbr_open";
+    return false;
+  }
 
   String ip = airCommand("AT+SAPBR=2,1", 3000);
   cellularReady = ip.indexOf("+SAPBR: 1,1") >= 0;
   Serial.println(cellularReady ? "Air780EX 4G 网络已就绪" : "Air780EX 4G 网络未获取到 IP");
+  if (!cellularReady) otaStatus = "sapbr_no_ip";
   return cellularReady;
 }
 
@@ -1099,6 +1152,410 @@ bool cellularHttpReport(String json) {
   airCommand("AT+HTTPTERM", 1000);
   if (!ok) cellularReady = false;
   return ok;
+}
+
+String manifestValue(String manifest, const char* key) {
+  String needle = String(key) + "=";
+  int start = manifest.indexOf(needle);
+  if (start < 0) return "";
+  start += needle.length();
+  int end = manifest.indexOf('\n', start);
+  if (end < 0) end = manifest.length();
+  String value = manifest.substring(start, end);
+  value.trim();
+  return value;
+}
+
+bool parseHttpAction(String action, int &status, int &dataLen) {
+  status = -1;
+  dataLen = 0;
+  int p = action.indexOf("+HTTPACTION:");
+  if (p < 0) return false;
+  int comma1 = action.indexOf(',', p);
+  int comma2 = action.indexOf(',', comma1 + 1);
+  if (comma1 < 0 || comma2 < 0) return false;
+  status = action.substring(comma1 + 1, comma2).toInt();
+  dataLen = action.substring(comma2 + 1).toInt();
+  return true;
+}
+
+bool cellularHttpStartGet(String url, int &status, int &dataLen, unsigned long actionTimeoutMs) {
+  if (!setupCellular()) {
+    if (otaStatus == "checking") otaStatus = "cellular_not_ready";
+    return false;
+  }
+
+  bool httpReady = false;
+  for (int attempt = 0; attempt < 3 && !httpReady; attempt++) {
+    airCommand("AT+HTTPTERM", 1000); // 上次未释放时先清理，失败忽略
+    delay(1200);
+    httpReady = airCommandOk("AT+HTTPINIT", 3000);
+  }
+  if (!httpReady) {
+    airCommandOk("AT+SAPBR=0,1", 3000);
+    cellularReady = false;
+    lastCellularSetup = 0;
+    otaStatus = "httpinit_fail";
+    return false;
+  }
+
+  bool cidReady = false;
+  for (int attempt = 0; attempt < 2 && !cidReady; attempt++) {
+    cidReady = airCommandOk("AT+HTTPPARA=\"CID\",1", 1500);
+    if (!cidReady) {
+      airCommand("AT+HTTPTERM", 1000);
+      delay(1200);
+      airCommandOk("AT+HTTPINIT", 3000);
+    }
+  }
+  if (!cidReady) {
+    otaStatus = "cid_fail";
+    return false;
+  }
+  airCommandOk(url.startsWith("https://") ? "AT+HTTPSSL=1" : "AT+HTTPSSL=0", 1500);
+  if (!airCommandOk(String("AT+HTTPPARA=\"URL\",\"") + url + "\"", 5000)) {
+    otaStatus = "url_fail";
+    return false;
+  }
+
+  String action = airCommand("AT+HTTPACTION=0", actionTimeoutMs, "+HTTPACTION:");
+  action += airRead(800);
+  if (!parseHttpAction(action, status, dataLen)) {
+    otaStatus = "action_parse";
+    return false;
+  }
+  if (status < 200 || status >= 300) {
+    otaStatus = String("http_") + String(status);
+  }
+  Serial.printf("Air780EX HTTP GET 状态: %d, 长度: %d\n", status, dataLen);
+  return true;
+}
+
+bool cellularFetchText(String url, String &body) {
+  int status = -1;
+  int dataLen = 0;
+  body = "";
+  if (!cellularHttpStartGet(url, status, dataLen, 20000)) {
+    airCommand("AT+HTTPTERM", 1000);
+    return false;
+  }
+  if (status < 200 || status >= 300) {
+    otaStatus = String("http_") + String(status);
+    airCommand("AT+HTTPTERM", 1000);
+    return false;
+  }
+  if (dataLen <= 0) {
+    otaStatus = String("empty_") + String(status);
+    airCommand("AT+HTTPTERM", 1000);
+    return false;
+  }
+  if (dataLen > 4096) {
+    otaStatus = "too_large";
+    airCommand("AT+HTTPTERM", 1000);
+    return false;
+  }
+
+  String resp = airCommand("AT+HTTPREAD", 12000, "OK");
+  airCommand("AT+HTTPTERM", 1000);
+  int p = resp.indexOf("+HTTPREAD:");
+  if (p < 0) {
+    otaStatus = "read_no_header";
+    return false;
+  }
+  int bodyStart = resp.indexOf('\n', p);
+  if (bodyStart < 0) {
+    otaStatus = "read_no_header";
+    return false;
+  }
+  bodyStart++;
+  int bodyEnd = resp.lastIndexOf("\r\nOK");
+  if (bodyEnd < bodyStart) bodyEnd = resp.lastIndexOf("\nOK");
+  if (bodyEnd < bodyStart) bodyEnd = resp.length();
+  body = resp.substring(bodyStart, bodyEnd);
+  body.trim();
+  if (body.length() == 0) {
+    otaStatus = "read_empty";
+    return false;
+  }
+  return true;
+}
+
+int airReadHttpPayloadHeader(unsigned long timeoutMs) {
+  String line = "";
+  unsigned long until = millis() + timeoutMs;
+  while (millis() < until) {
+    while (airSerial.available()) {
+      char c = (char)airSerial.read();
+      if (c == '\r') continue;
+      if (c == '\n') {
+        line.trim();
+        if (line.startsWith("+HTTPREAD:") ||
+            line.startsWith("+HTTPGET:") ||
+            line.startsWith("+HTTPEXGET:")) {
+          int colon = line.indexOf(':');
+          String len = line.substring(colon + 1);
+          len.trim();
+          return len.toInt();
+        }
+        line = "";
+      } else if (line.length() < 96) {
+        line += c;
+      } else {
+        line = "";
+      }
+    }
+    delay(1);
+  }
+  return -1;
+}
+
+int airReadHttpReadHeader(unsigned long timeoutMs) {
+  return airReadHttpPayloadHeader(timeoutMs);
+}
+
+bool cellularReadOtaChunk(int offset, int requestedLen, int &writtenLen) {
+  writtenLen = 0;
+  while (airSerial.available()) airSerial.read();
+  airSerial.print("AT+HTTPREAD=");
+  airSerial.print(offset);
+  airSerial.print(",");
+  airSerial.print(requestedLen);
+  airSerial.print("\r\n");
+
+  int actualLen = airReadHttpReadHeader(8000);
+  if (actualLen <= 0 || actualLen > requestedLen) {
+    Serial.printf("OTA 分块头异常 offset=%d len=%d\n", offset, actualLen);
+    otaStatus = "chunk_header";
+    return false;
+  }
+
+  uint8_t buf[128];
+  int remaining = actualLen;
+  unsigned long lastByteAt = millis();
+  while (remaining > 0 && millis() - lastByteAt < 8000) {
+    int available = airSerial.available();
+    if (available <= 0) {
+      delay(1);
+      continue;
+    }
+    int n = min(available, min((int)sizeof(buf), remaining));
+    int got = airSerial.readBytes(buf, n);
+    if (got <= 0) continue;
+    lastByteAt = millis();
+    size_t w = Update.write(buf, got);
+    if (w != (size_t)got) {
+      Serial.println("OTA 写入 flash 失败");
+      otaStatus = "flash_write";
+      return false;
+    }
+    writtenLen += got;
+    remaining -= got;
+  }
+
+  if (remaining != 0) {
+    Serial.println("OTA 分块读取超时");
+    otaStatus = "chunk_timeout";
+    return false;
+  }
+
+  String tail = airReadUntil(5000, "OK");
+  if (tail.indexOf("OK") < 0) {
+    Serial.println("OTA 分块缺少 OK");
+    otaStatus = "chunk_no_ok";
+    return false;
+  }
+  return true;
+}
+
+bool cellularStartExtendedGet(String url) {
+  if (!setupCellular()) {
+    if (otaStatus == "downloading") otaStatus = "cellular_not_ready";
+    return false;
+  }
+
+  bool httpReady = false;
+  for (int attempt = 0; attempt < 3 && !httpReady; attempt++) {
+    airCommand("AT+HTTPTERM", 1000);
+    delay(1200);
+    httpReady = airCommandOk("AT+HTTPINIT", 3000);
+  }
+  if (!httpReady) {
+    airCommandOk("AT+SAPBR=0,1", 3000);
+    cellularReady = false;
+    lastCellularSetup = 0;
+    otaStatus = "ex_httpinit_fail";
+    return false;
+  }
+
+  bool cidReady = false;
+  for (int attempt = 0; attempt < 2 && !cidReady; attempt++) {
+    cidReady = airCommandOk("AT+HTTPPARA=\"CID\",1", 1500);
+    if (!cidReady) {
+      airCommand("AT+HTTPTERM", 1000);
+      delay(1200);
+      airCommandOk("AT+HTTPINIT", 3000);
+    }
+  }
+  if (!cidReady) {
+    otaStatus = "ex_cid_fail";
+    return false;
+  }
+  airCommandOk(url.startsWith("https://") ? "AT+HTTPSSL=1" : "AT+HTTPSSL=0", 1500);
+  if (!airCommandOk(String("AT+HTTPPARA=\"URL\",\"") + url + "\"", 5000)) {
+    otaStatus = "ex_url_fail";
+    return false;
+  }
+  if (!airCommandOk("AT+HTTPEXACTION=0", 5000)) {
+    otaStatus = "ex_action_fail";
+    return false;
+  }
+  airRead(300);
+  return true;
+}
+
+bool cellularReadExtendedOtaChunk(int requestedLen, int &writtenLen) {
+  writtenLen = 0;
+  while (airSerial.available()) airSerial.read();
+  airSerial.print("AT+HTTPEXGET=");
+  airSerial.print(requestedLen);
+  airSerial.print("\r\n");
+
+  int actualLen = airReadHttpPayloadHeader(15000);
+  if (actualLen <= 0 || actualLen > requestedLen) {
+    Serial.printf("OTA 扩展分块头异常 len=%d want=%d\n", actualLen, requestedLen);
+    otaStatus = "ex_header";
+    return false;
+  }
+
+  uint8_t buf[128];
+  int remaining = actualLen;
+  unsigned long lastByteAt = millis();
+  while (remaining > 0 && millis() - lastByteAt < 15000) {
+    int available = airSerial.available();
+    if (available <= 0) {
+      delay(1);
+      continue;
+    }
+    int n = min(available, min((int)sizeof(buf), remaining));
+    int got = airSerial.readBytes(buf, n);
+    if (got <= 0) continue;
+    lastByteAt = millis();
+    size_t w = Update.write(buf, got);
+    if (w != (size_t)got) {
+      Serial.println("OTA 扩展分块写入 flash 失败");
+      otaStatus = "ex_flash_write";
+      return false;
+    }
+    writtenLen += got;
+    remaining -= got;
+  }
+
+  if (remaining != 0) {
+    Serial.println("OTA 扩展分块读取超时");
+    otaStatus = "ex_timeout";
+    return false;
+  }
+
+  String tail = airReadUntil(10000, "OK");
+  if (tail.indexOf("OK") < 0) {
+    Serial.println("OTA 扩展分块缺少 OK");
+    otaStatus = "ex_no_ok";
+    return false;
+  }
+  return true;
+}
+
+bool cellularDownloadAndApplyOta(String url, int expectedSize, String expectedMd5) {
+  if (expectedSize <= 0) {
+    otaStatus = "size_missing";
+    return false;
+  }
+  if (!cellularStartExtendedGet(url)) {
+    if (otaStatus == "downloading") otaStatus = "bin_start_fail";
+    airCommand("AT+HTTPTERM", 1000);
+    return false;
+  }
+
+  if (!Update.begin(expectedSize)) {
+    Serial.printf("OTA 开始失败，可用空间不足或分区不支持，size=%d\n", expectedSize);
+    otaStatus = "begin_fail";
+    airCommand("AT+HTTPTERM", 1000);
+    return false;
+  }
+  expectedMd5.trim();
+  if (expectedMd5.length() > 0 && !Update.setMD5(expectedMd5.c_str())) {
+    Serial.println("OTA MD5 格式无效，取消升级");
+    otaStatus = "md5_bad";
+    Update.abort();
+    airCommand("AT+HTTPTERM", 1000);
+    return false;
+  }
+
+  int offset = 0;
+  while (offset < expectedSize) {
+    int want = min(CELLULAR_OTA_CHUNK_SIZE, expectedSize - offset);
+    int wrote = 0;
+    if (!cellularReadExtendedOtaChunk(want, wrote)) {
+      Update.abort();
+      airCommand("AT+HTTPTERM", 1000);
+      return false;
+    }
+    offset += wrote;
+    Serial.printf("4G OTA: %d/%d\n", offset, expectedSize);
+    delay(1);
+  }
+
+  airCommand("AT+HTTPTERM", 1000);
+  if (!Update.end(true)) {
+    Serial.printf("OTA 结束失败: %s\n", Update.errorString());
+    otaStatus = "end_fail";
+    return false;
+  }
+  Serial.println("4G OTA 完成，准备重启");
+  delay(1000);
+  ESP.restart();
+  return true;
+}
+
+void checkCellularOta() {
+  Serial.println("检查 Air780EX 4G OTA manifest...");
+  otaStatus = "checking";
+  String manifest;
+  if (!cellularFetchText(CELLULAR_OTA_MANIFEST_URL, manifest)) {
+    if (otaStatus == "checking") otaStatus = "manifest_fail";
+    Serial.println("4G OTA manifest 获取失败或为空");
+    return;
+  }
+
+  String enabled = manifestValue(manifest, "enabled");
+  enabled.toLowerCase();
+  if (enabled != "1" && enabled != "true" && enabled != "yes" && enabled != "on") {
+    otaStatus = "disabled";
+    Serial.println("4G OTA 未启用");
+    return;
+  }
+
+  String version = manifestValue(manifest, "version");
+  String sizeText = manifestValue(manifest, "size");
+  String md5Text = manifestValue(manifest, "md5");
+  String url = manifestValue(manifest, "url");
+  if (version.length() == 0 || url.length() == 0) {
+    otaStatus = "bad_manifest";
+    Serial.println("4G OTA manifest 缺少 version/url");
+    return;
+  }
+  if (version == FW_VERSION) {
+    otaStatus = "latest";
+    Serial.printf("4G OTA 已是最新版本: %s\n", FW_VERSION);
+    return;
+  }
+
+  int expectedSize = sizeText.toInt();
+  otaStatus = "downloading";
+  Serial.printf("发现 4G OTA 新版本: 当前=%s 目标=%s\n", FW_VERSION, version.c_str());
+  if (!cellularDownloadAndApplyOta(url, expectedSize, md5Text)) {
+    if (otaStatus == "downloading") otaStatus = "update_fail";
+  }
 }
 
 void publishCellularStatus() {
@@ -1313,7 +1770,8 @@ void publishSensorData() {
   // 发布状态（WiFi 信号、运行时间始终可用）
   json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
   json += "\"uptime\":" + String(millis() / 1000) + ",";
-  json += "\"ip\":\"" + WiFi.localIP().toString() + "\"";
+  json += "\"ip\":\"" + WiFi.localIP().toString() + "\",";
+  json += "\"fw\":\"" + String(FW_VERSION) + "\"";
 #ifdef USE_GPS
   json += ",\"lat\":" + String(gpsLat, 6) + ",\"lng\":" + String(gpsLng, 6);
   json += ",\"alt\":" + String(gpsAlt, 1) + ",\"spd\":" + String(gpsSpd, 1);
@@ -1324,6 +1782,7 @@ void publishSensorData() {
   json += ",\"sim\":\"" + cachedSim + "\"";
   json += ",\"net\":\"" + cachedNet + "\"";
   json += ",\"tech\":\"" + cachedTech + "\"";
+  json += ",\"ota\":\"" + otaStatus + "\"";
 #endif
   json += "}";
   mqttClient.publish(mqtt_topic_status, json.c_str());
@@ -1409,13 +1868,14 @@ bool parseCgnsinf(String line) {
   float lng = fields[4].toFloat();
   if (fix <= 0 || (lat == 0 && lng == 0)) return false;
 
-  gpsFix = fix;
+  gpsFix = 1;
   gpsLat = lat;
   gpsLng = lng;
   gpsAlt = fields[5].toFloat();
   gpsSpd = fields[6].toFloat();
   if (f > 15) gpsSat = fields[15].toInt();
   else if (f > 14) gpsSat = fields[14].toInt();
+  gpsLastFixMs = millis();
   return true;
 }
 
@@ -1437,11 +1897,12 @@ bool parseNmeaSentence(String line) {
     float lng = nmeaCoordToDecimal(fields[4], fields[5]);
     if (fix <= 0 || (lat == 0 && lng == 0)) return false;
 
-    gpsFix = fix;
+    gpsFix = 1;
     gpsLat = lat;
     gpsLng = lng;
     gpsSat = fields[7].toInt();
     gpsAlt = fields[9].toFloat();
+    gpsLastFixMs = millis();
     return true;
   }
 
@@ -1455,6 +1916,7 @@ bool parseNmeaSentence(String line) {
     gpsLat = lat;
     gpsLng = lng;
     gpsSpd = fields[7].toFloat() * 1.852; // knots -> km/h
+    gpsLastFixMs = millis();
     return true;
   }
 
@@ -1505,6 +1967,12 @@ void readGPS() {
     Serial.print("GPS: 无响应 raw=[");
     Serial.print(raw.length() ? raw : "(空)");
     Serial.println("]");
+    if (gpsFix > 0 && gpsLastFixMs > 0 && millis() - gpsLastFixMs > GPS_STALE_MS) {
+      gpsFix = 0;
+      gpsSat = 0;
+      gpsSpd = 0;
+      Serial.println("GPS: 信号超时，停止上报旧坐标");
+    }
     return;
   }
 
@@ -1534,7 +2002,7 @@ void wifiLocate() {
     if (li > 0 && ni > 0) {
       gpsLat = body.substring(li + 6, body.indexOf(",", li)).toFloat();
       gpsLng = body.substring(ni + 6, body.indexOf("}", ni)).toFloat();
-      gpsFix = 1;
+      gpsFix = 2;
       Serial.printf("IP定位: %.4f, %.4f\n", gpsLat, gpsLng);
     }
   }
@@ -1689,7 +2157,7 @@ void loop() {
   // GPS 定时发布（坐标在 publishSensorData 中每 5 秒更新）
   if (millis() - lastGpsPublish >= GPS_INTERVAL) {
     lastGpsPublish = millis();
-    if (gpsFix > 0 && mqttClient.connected()) {
+    if (gpsFix == 1 && mqttClient.connected()) {
       char buf[100];
       snprintf(buf, sizeof(buf),
         "{\"lat\":%.6f,\"lng\":%.6f,\"alt\":%.1f,\"spd\":%.1f,\"sat\":%d,\"fix\":%d}",
@@ -1703,6 +2171,11 @@ void loop() {
   if (millis() - lastCellularPublish >= CELLULAR_INTERVAL) {
     lastCellularPublish = millis();
     publishCellularStatus();
+  }
+  if (millis() > CELLULAR_OTA_INITIAL_DELAY &&
+      (lastCellularOtaCheck == 0 || millis() - lastCellularOtaCheck >= CELLULAR_OTA_CHECK_INTERVAL)) {
+    lastCellularOtaCheck = millis();
+    checkCellularOta();
   }
 #endif
 

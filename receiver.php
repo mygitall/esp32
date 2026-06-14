@@ -28,7 +28,7 @@ if ($isGet && !empty($_GET['batch'])) {
             $f = explode(',', $part);
             if (count($f) < 8) continue;
             $lat = floatval($f[0]); $lng = floatval($f[1]);
-            if (($lat === 0.0 && $lng === 0.0) || $lat < 18 || $lat > 54 || $lng < 73 || $lng > 136) continue;
+            if (!isRealGpsPoint($lat, $lng, 1)) continue;
             $stmt->execute([
                 'temp' => $f[6] ?? null, 'hum' => null,
                 'rssi' => $f[5] ?? null, 'uptime' => null,
@@ -75,7 +75,7 @@ try {
         foreach ($params as $p) {
             $lat = floatval($p['la'] ?? 0);
             $lng = floatval($p['lo'] ?? 0);
-            if (($lat === 0.0 && $lng === 0.0) || $lat < 18 || $lat > 54 || $lng < 73 || $lng > 136) continue;
+            if (!isRealGpsPoint($lat, $lng, 1)) continue;
             $stmt->execute([
                 'temp' => $p['mv'] ?? null, 'hum' => null,
                 'rssi' => $p['bt'] ?? null, 'uptime' => null,
@@ -94,13 +94,11 @@ try {
     // 单条模式（GET）
     $lat = floatval($params['lat'] ?? 0);
     $lng = floatval($params['lng'] ?? 0);
-    if (($lat === 0.0 && $lng === 0.0) || $lat < 18 || $lat > 54 || $lng < 73 || $lng > 136) {
-        echo json_encode(['status' => 'error', 'message' => 'invalid coordinates']);
-        exit;
-    }
+    $fix = intval($params['fix'] ?? 0);
+    $hasGps = isRealGpsPoint($lat, $lng, $fix);
     $stmt = $db->prepare(
-        'INSERT INTO sensor_data (temperature, humidity, rssi, uptime, ip, lat, lng, alt, spd, sat, fix, cell_csq, cell_sim, cell_net, cell_tech, recorded_at)
-         VALUES (:temp, :hum, :rssi, :uptime, :ip, :lat, :lng, :alt, :spd, :sat, :fix, :csq, :sim, :net, :tech, :ts)'
+        'INSERT INTO sensor_data (temperature, humidity, rssi, uptime, ip, fw, lat, lng, alt, spd, sat, fix, cell_csq, cell_sim, cell_net, cell_tech, ota_status, recorded_at)
+         VALUES (:temp, :hum, :rssi, :uptime, :ip, :fw, :lat, :lng, :alt, :spd, :sat, :fix, :csq, :sim, :net, :tech, :ota, :ts)'
     );
     $stmt->execute([
         'temp'   => $params['mv'] ?? $params['temp'] ?? null,
@@ -108,16 +106,18 @@ try {
         'rssi'   => $params['rssi'] ?? null,
         'uptime' => $params['uptime'] ?? null,
         'ip'     => $_SERVER['REMOTE_ADDR'] ?? null,
-        'lat'    => $params['lat'] ?? null,
-        'lng'    => $params['lng'] ?? null,
-        'alt'    => $params['alt'] ?? null,
-        'spd'    => $params['spd'] ?? null,
-        'sat'    => $params['sat'] ?? null,
-        'fix'    => $params['fix'] ?? null,
+        'fw'     => isset($params['fw']) ? substr((string)$params['fw'], 0, 32) : null,
+        'lat'    => $hasGps ? $lat : null,
+        'lng'    => $hasGps ? $lng : null,
+        'alt'    => $hasGps ? ($params['alt'] ?? null) : null,
+        'spd'    => $hasGps ? ($params['spd'] ?? null) : null,
+        'sat'    => $hasGps ? ($params['sat'] ?? null) : null,
+        'fix'    => $hasGps ? 1 : 0,
         'csq'    => $params['csq'] ?? null,
         'sim'    => $params['sim'] ?? null,
         'net'    => $params['net'] ?? null,
         'tech'   => $params['tech'] ?? null,
+        'ota'    => isset($params['ota']) ? substr((string)$params['ota'], 0, 32) : null,
         'ts'     => $now,
     ]);
     echo json_encode(['status' => 'ok', 'ts' => $now]);
@@ -125,4 +125,11 @@ try {
     http_response_code(500);
     error_log('receiver: ' . $e->getMessage());
     echo json_encode(['status' => 'error', 'message' => 'Internal error']);
+}
+
+function isRealGpsPoint(float $lat, float $lng, int $fix): bool {
+    return $fix === 1
+        && !($lat === 0.0 && $lng === 0.0)
+        && $lat >= 18 && $lat <= 54
+        && $lng >= 73 && $lng <= 136;
 }

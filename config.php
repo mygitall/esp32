@@ -1,11 +1,11 @@
 <?php
 // ==================== 数据库配置 ====================
 // 上传虚拟主机时修改这里
-define('DB_HOST', '127.0.0.1');
-define('DB_PORT', '8889');
-define('DB_NAME', 'esp32_monitor');
-define('DB_USER', 'root');
-define('DB_PASS', 'root');
+define('DB_HOST', 'localhost');
+define('DB_PORT', '3306');
+define('DB_NAME', 'gao367888125');
+define('DB_USER', 'gao367888125');
+define('DB_PASS', 'c6f57i8j');
 // 老版本 MySQL 可能不支持 utf8mb4；连接失败时会自动回退到 utf8。
 define('DB_CHARSET', 'utf8mb4');
 define('DB_FALLBACK_CHARSET', 'utf8');

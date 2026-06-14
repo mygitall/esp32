@@ -254,6 +254,11 @@ body{
           <div id="dispTech" class="stat-val" style="color:var(--text3);font-size:1rem;padding-top:2px">--</div>
           <div class="stat-lbl">制式</div>
         </div>
+        <div class="stat">
+          <div class="stat-icon">⬆️</div>
+          <div id="dispFw" class="stat-val" style="color:var(--accent);font-size:1rem;padding-top:2px">--</div>
+          <div class="stat-lbl">固件版本</div>
+        </div>
       </div>
     </div>
 
@@ -302,7 +307,7 @@ body{
 
 <script>
 // ============ 配置 ============
-const API_BASE = 'https://www.sseeee.com/esp32/mmq/api.php';
+const API_BASE = 'api.php';
 const REFRESH_MS = 5000;
 
 const $ = id => document.getElementById(id);
@@ -360,7 +365,7 @@ function normalizeGpsPoint(p) {
   const lng = Number(p.lng);
   const fix = Number(p.fix || 0);
 
-  if (!lat || !lng || lat === 0 || lng === 0 || fix <= 0) {
+  if (!lat || !lng || lat === 0 || lng === 0 || fix !== 1) {
     return null;
   }
 
@@ -485,6 +490,9 @@ function buildHistoryQuery() {
   const to = $('historyTo').value;
   const format = $('historyFormat').value;
   const params = new URLSearchParams();
+  params.set('gps_only', '1');
+  params.set('min_dist', '3');
+  params.set('max_speed', '180');
 
   if (mode === 'today') {
     params.set('range', 'today');
@@ -524,6 +532,7 @@ function extractHistoryPoints(payload) {
 function normalizeHistoryPoint(p) {
   const lat = Number(p.lat ?? p.latitude);
   const lng = Number(p.lng ?? p.lon ?? p.longitude);
+  if (p.fix !== undefined && Number(p.fix) !== 1) return null;
   if (!lat || !lng) return null;
   const [gcjLat, gcjLng] = wgs2gcj(lat, lng);
   return {
@@ -596,7 +605,7 @@ async function loadHistoryTrack() {
 // ============ 信号格 ============
 function updateSigBars(csq) {
   const bars = ['sig1','sig2','sig3','sig4'];
-  const level = csq === null ? -1 : csq >= 25 ? 4 : csq >= 18 ? 3 : csq >= 12 ? 2 : csq >= 6 ? 1 : 0;
+  const level = csq === null || csq === 99 ? -1 : csq >= 25 ? 4 : csq >= 18 ? 3 : csq >= 12 ? 2 : csq >= 6 ? 1 : 0;
   bars.forEach((id, i) => {
     const el = $(id);
     if (!el) return;
@@ -605,8 +614,10 @@ function updateSigBars(csq) {
 }
 
 // ============ 渲染数据 ============
-function renderData(p) {
-  const point = normalizeGpsPoint(p);
+function renderData(p, gpsP) {
+  const gpsSource = gpsP || null;
+  const gpsStats = gpsSource || {};
+  const point = normalizeGpsPoint(gpsSource || {});
   const isFix = !!point;
 
   // 地图
@@ -626,37 +637,34 @@ function renderData(p) {
 
   // GPS fix
   const fixBadge = $('fixBadge');
-  if (p.fix === null || p.fix === undefined) {
+  if (!gpsSource || gpsSource.fix === null || gpsSource.fix === undefined) {
     fixBadge.textContent = '无数据';
     fixBadge.className = 'fix-badge';
-  } else if (p.fix >= 2) {
-    fixBadge.textContent = '✅ RTK/2D';
+  } else if (Number(gpsSource.fix) === 1) {
+    fixBadge.textContent = '真实 GPS';
     fixBadge.className = 'fix-badge fix2';
-  } else if (p.fix === 1) {
-    fixBadge.textContent = '⏳ GPS 定位中';
-    fixBadge.className = 'fix-badge fix1';
   } else {
-    fixBadge.textContent = '❌ 无定位';
+    fixBadge.textContent = '非 GPS';
     fixBadge.className = 'fix-badge';
   }
 
   // 速度
-  if (p.spd !== null && p.spd !== undefined) {
-    $('dispSpd').innerHTML = p.spd.toFixed(1) + '<span class="stat-lbl" style="display:block;font-size:.65rem;color:var(--text3);font-weight:400">km/h</span>';
+  if (gpsStats.spd !== null && gpsStats.spd !== undefined) {
+    $('dispSpd').innerHTML = Number(gpsStats.spd).toFixed(1) + '<span class="stat-lbl" style="display:block;font-size:.65rem;color:var(--text3);font-weight:400">km/h</span>';
   } else {
     $('dispSpd').innerHTML = '--<span class="stat-lbl" style="display:block;font-size:.65rem;color:var(--text3);font-weight:400">km/h</span>';
   }
 
   // 海拔
-  if (p.alt !== null && p.alt !== undefined) {
-    $('dispAlt').innerHTML = p.alt.toFixed(1) + '<span class="stat-lbl" style="display:block;font-size:.65rem;color:var(--text3);font-weight:400">m</span>';
+  if (gpsStats.alt !== null && gpsStats.alt !== undefined) {
+    $('dispAlt').innerHTML = Number(gpsStats.alt).toFixed(1) + '<span class="stat-lbl" style="display:block;font-size:.65rem;color:var(--text3);font-weight:400">m</span>';
   } else {
     $('dispAlt').innerHTML = '--<span class="stat-lbl" style="display:block;font-size:.65rem;color:var(--text3);font-weight:400">m</span>';
   }
 
   // 卫星
-  if (p.sat !== null && p.sat !== undefined) {
-    const sat = Number(p.sat);
+  if (gpsStats.sat !== null && gpsStats.sat !== undefined) {
+    const sat = Number(gpsStats.sat);
     $('dispSat').textContent = sat;
     $('dispSat').style.color = sat >= 10 ? 'var(--gold)' : sat >= 5 ? 'var(--accent)' : 'var(--red)';
   } else {
@@ -683,12 +691,13 @@ function renderData(p) {
   $('dispSim').style.color = p.sim ? 'var(--green)' : 'var(--text3)';
 
   // CSQ
-  if (p.csq !== null && p.csq !== undefined) {
-    $('dispCsq').textContent = p.csq + ' dBm';
-    $('dispCsq').style.color = Number(p.csq) >= -75 ? 'var(--green)' : Number(p.csq) >= -95 ? 'var(--gold)' : 'var(--red)';
-    updateSigBars(Number(p.csq));
+  const csq = p.csq !== null && p.csq !== undefined ? Number(p.csq) : null;
+  if (csq !== null && csq !== 99) {
+    $('dispCsq').textContent = csq + ' CSQ';
+    $('dispCsq').style.color = csq >= 25 ? 'var(--green)' : csq >= 12 ? 'var(--gold)' : 'var(--red)';
+    updateSigBars(csq);
   } else {
-    $('dispCsq').textContent = '--';
+    $('dispCsq').textContent = '未知';
     $('dispCsq').style.color = 'var(--text3)';
     updateSigBars(null);
   }
@@ -698,6 +707,9 @@ function renderData(p) {
 
   // 制式
   $('dispTech').textContent = p.tech || '--';
+
+  // 固件版本
+  $('dispFw').textContent = p.fw || '--';
 
   // 时间戳
   $('dispTs').textContent = p.ts ? '🕐 更新时间: ' + p.ts : '--';
@@ -722,7 +734,7 @@ async function loadData() {
     $('errorCard').style.display = 'none';
     $('content').style.display = 'block';
 
-    renderData(json.latest);
+    renderData(json.latest, json.latest_gps || null);
 
     $('connDot').classList.remove('loading');
     $('connDot').classList.add('live');

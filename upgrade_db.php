@@ -10,8 +10,13 @@ try {
     $db = getDB();
     $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
 
-    // 检查并添加 GPS 列
-    $gpsCols = ['lat'=>'DOUBLE','lng'=>'DOUBLE','alt'=>'DOUBLE','spd'=>'DOUBLE','sat'=>'INT','fix'=>'INT'];
+    // 检查并添加 GPS + 蜂窝列
+    $gpsCols = [
+        'fw'=>'VARCHAR(32)',
+        'lat'=>'DOUBLE','lng'=>'DOUBLE','alt'=>'DOUBLE','spd'=>'DOUBLE','sat'=>'INT','fix'=>'INT',
+        'cell_csq'=>'INT','cell_sim'=>'VARCHAR(16)','cell_net'=>'VARCHAR(16)','cell_tech'=>'VARCHAR(16)',
+        'ota_status'=>'VARCHAR(32)',
+    ];
 
     foreach ($gpsCols as $col => $type) {
         $has = false;
@@ -29,7 +34,35 @@ try {
             echo "⏭ 已存在: $col\n";
         }
     }
-    echo "\n🎉 数据库升级完成！可以关闭此页面。";
+
+    $indexes = [
+        'idx_lat_lng' => 'CREATE INDEX idx_lat_lng ON sensor_data (lat, lng)',
+        'idx_gps_recorded' => 'CREATE INDEX idx_gps_recorded ON sensor_data (`fix`, recorded_at)',
+    ];
+    foreach ($indexes as $name => $sql) {
+        if (indexExists($db, $driver, $name)) {
+            echo "⏭ 已存在索引: $name\n";
+            continue;
+        }
+        $db->exec($sql);
+        echo "✅ 添加索引: $name\n";
+    }
+
+    echo "\n🎉 数据库升级完成（GPS + 蜂窝列 + 查询索引）！可以关闭此页面。";
 } catch (Exception $e) {
     echo "❌ 错误: " . $e->getMessage();
+}
+
+function indexExists(PDO $db, string $driver, string $name): bool {
+    if ($driver === 'mysql') {
+        $safe = str_replace("'", "''", $name);
+        $r = $db->query("SHOW INDEX FROM sensor_data WHERE Key_name = '$safe'");
+        return (bool)$r->fetch();
+    }
+
+    $r = $db->query('PRAGMA index_list(sensor_data)');
+    foreach ($r as $row) {
+        if (($row['name'] ?? '') === $name) return true;
+    }
+    return false;
 }

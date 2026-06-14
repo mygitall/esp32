@@ -336,7 +336,7 @@
   // ==================== 配置 ====================
   const broker = 'wss://broker.emqx.io:8084/mqtt';
   const MAX_HISTORY = 100000; // LZ-String 压缩后约 1.5MB（10万条 ≈ 5MB 未压缩）
-  const API_BASE = 'https://www.sseeee.com/esp32/mmq/api.php';  // PHP API 地址
+  const API_BASE = 'api.php';  // PHP API 地址
 
   // ==================== 状态 ====================
   let ledOn = false;
@@ -459,6 +459,9 @@
       '经度 ' + lng.toFixed(6) + '  纬度 ' + lat.toFixed(6) +
       '  海拔 ' + (alt || 0).toFixed(1) + 'm  速度 ' + (spd || 0).toFixed(1) + 'km/h  卫星 ' + (sat || 0);
   }
+  function isRealGpsFix(d) {
+    return Number(d && d.fix || 0) === 1;
+  }
 
   client.on('message', (topic, payload) => {
     touchData();
@@ -491,7 +494,7 @@
     } else if (topic === 'esp32/gps') {
       try {
         const d = JSON.parse(msg);
-        if (d.fix > 0) updateMarker(d.lat, d.lng, d.alt, d.spd, d.sat);
+        if (isRealGpsFix(d)) updateMarker(d.lat, d.lng, d.alt, d.spd, d.sat);
       } catch(e) {}
     }
 
@@ -499,7 +502,7 @@
     if (topic === 'esp32/status') {
       try {
         const d = JSON.parse(msg);
-        if (d.lat && d.lng && d.fix > 0) updateMarker(d.lat, d.lng, d.alt, d.spd, d.sat);
+        if (d.lat && d.lng && isRealGpsFix(d)) updateMarker(d.lat, d.lng, d.alt, d.spd, d.sat);
       } catch(e) {}
     }
 
