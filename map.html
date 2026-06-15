@@ -64,6 +64,20 @@
 .gps-bar.g2{background:var(--orange)}
 .gps-bar.g3{background:var(--green)}
 .gps-bar.g4{background:var(--green)}
+  /* 固件版本标签 */
+  .fw-badge{display:flex;align-items:center;gap:6px;background:var(--panel-bg);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:100px;padding:6px 14px;font-size:.65rem;color:var(--text2);cursor:pointer;white-space:nowrap;position:relative;user-select:none}
+  .fw-badge .fw-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);flex-shrink:0}
+  .fw-badge .fw-dot.updating{animation:fwPulse .8s infinite;background:var(--orange)}
+  @keyframes fwPulse{0%,100%{opacity:1}50%{opacity:.3}}
+  .fw-history-popup{position:absolute;top:calc(100% + 6px);right:0;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:8px 0;min-width:200px;box-shadow:0 8px 32px rgba(0,0,0,.3);z-index:2000;display:none;max-height:240px;overflow-y:auto}
+  .fw-history-popup.show{display:block}
+  .fw-history-item{display:flex;align-items:center;justify-content:space-between;padding:6px 14px;font-size:.7rem;color:var(--text2)}
+  .fw-history-item .fw-ver{font-weight:600;color:var(--text)}
+  .fw-history-item .fw-time{font-size:.6rem;color:var(--text3)}
+  .fw-history-item.current{background:rgba(79,143,255,.08)}
+  .fw-history-item.current .fw-dot-indicator{width:5px;height:5px;border-radius:50%;background:var(--accent);margin-right:6px;flex-shrink:0}
+  .fw-history-divider{height:1px;background:var(--border);margin:4px 12px}
+
 
   /* 底部面板 — 可上滑 */
   .infobar{
@@ -147,6 +161,9 @@
   .cell-badge > .cell-sep:last-child{display:none}
   .cell-badge{gap:4px}
   .status-group{gap:4px}
+
+  .fw-badge{padding:4px 10px;font-size:.55rem;gap:4px}
+  .fw-history-popup{min-width:160px;max-height:180px}
 /* GPX 导出按钮 */
 .rbtn.gpx-btn{background:rgba(0,212,170,.1);border-color:var(--green);color:var(--green)}
 .rbtn.gpx-btn:active{background:rgba(0,212,170,.25)}
@@ -190,6 +207,12 @@
     <div class="cell-item"><div class="cell-dot" id="cellNet"></div><span id="cellNetTxt">网络--</span></div>
     <div class="cell-sep"></div>
     <div class="cell-item"><span>AirM2M Air780EX</span></div>
+  </div>
+  <div class="fw-badge" id="fwBadge" onclick="toggleFwHistory(event)" title="OTA 固件版本">
+    <div class="fw-dot" id="fwDot"></div>
+    <span id="fwVerText">v--</span>
+    <span style="font-size:.55rem;opacity:.5" id="fwOtaText"></span>
+    <div class="fw-history-popup" id="fwHistoryPopup"></div>
   </div>
 </div>
   </div>
@@ -320,6 +343,7 @@ function httpPoll(){
       if(gps&&isRealGpsFix(gps)) updateDisplay(gps);
       // 蜂窝数据（WiFi断开时 HTTP 上报携带 csq/sim/net/tech）
       if(p.csq!=null) updateCellular({sim:p.sim||'unknown',csq:Number(p.csq),net:p.net||'unknown',tech:p.tech||''});
+      if(p.fw) updateFwBadge(p.fw, p.ota||'');
     }
   }).catch(()=>{});
 }
@@ -426,6 +450,7 @@ const accuracyCircle=L.circle([31.23,121.47],{radius:100,color:'#4f8fff',weight:
 
 // 轨迹线 — 只使用设备真实 GPS 点；相邻 GPS 点之间按直线连接
 let traveledIdx=0,traveledPath=[],totalMileage=0;
+let fwHistory=[],fwCurrent='',otaStatus='';
 let gpsHistory=[];
 let refLineShown=!1,lastTrackKey='';
 
@@ -3431,6 +3456,7 @@ client.on('message',(topic,payload)=>{
   try{
     const d=JSON.parse(payload.toString());
     if(topic==='esp32/cellular'){updateCellular(d);return;}
+    if(d.fw) updateFwBadge(d.fw, d.ota||''); // 固件版本
     // 更新电量（所有消息都可能有bat字段）
     if(d.bat!==undefined){$('bat').textContent=d.bat;$('bat').style.color=d.bat<20?'#ff4757':d.bat<50?'#ffa502':'#4f8fff';}
     if(d.mv!==undefined){$('batMv').textContent='('+(d.mv/1000).toFixed(3)+'V)';}
@@ -3473,6 +3499,10 @@ function updateCellular(d){
   try{
     const c=JSON.parse(localStorage.getItem('cell_last'));
     if(c)updateCellular({sim:c.sim,csq:c.csq,net:c.net,tech:c.tech});
+    try{fwHistory=JSON.parse(localStorage.getItem('fwHistory')||'[]');}catch(e){fwHistory=[];}
+    if(fwHistory.length){let last=fwHistory[fwHistory.length-1];fwCurrent=last.ver;}
+    // 延迟渲染，确保 DOM 就绪
+    setTimeout(function(){try{renderFwBadge()}catch(e){}},100);
   }catch(e){}
 })();
 
@@ -3717,6 +3747,80 @@ let infobarPressTimer=null;
   el.addEventListener('touchend',()=>clearTimeout(infobarPressTimer));
   el.addEventListener('touchmove',()=>clearTimeout(infobarPressTimer));
 })();
+
+// ============= 固件版本显示 & 升级记录 =============
+function updateFwBadge(ver,ota){
+  try{
+  if(!ver)return;
+  if(ver!==fwCurrent){
+    const now=new Date();
+    const ts=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+
+            String(now.getDate()).padStart(2,'0')+' '+String(now.getHours()).padStart(2,'0')+':'+
+            String(now.getMinutes()).padStart(2,'0');
+    fwHistory.push({ver:ver,time:ts});
+    if(fwHistory.length>20) fwHistory.shift();
+    localStorage.setItem('fwHistory',JSON.stringify(fwHistory));
+    fwCurrent=ver;
+  }
+  otaStatus=ota||'';
+  renderFwBadge();
+  }catch(e){}
+}
+
+function renderFwBadge(){
+  try{
+    const dot=$('fwDot'),txt=$('fwVerText'),otaEl=$('fwOtaText');
+    if(!dot||!txt)return;
+  txt.textContent=fwCurrent?'v'+fwCurrent:'v--';
+  if(otaStatus&&otaStatus!=='idle'&&otaStatus!=='latest'&&otaStatus!=='disabled'){
+    dot.classList.add('updating');
+    otaEl.textContent=' '+otaStatus;
+    otaEl.style.display='';
+  }else{
+    dot.classList.remove('updating');
+    otaEl.textContent='';
+    otaEl.style.display='none';
+  }
+  }catch(e){}
+}
+
+function toggleFwHistory(evt){
+  try{
+    evt.stopPropagation();
+    const popup=$('fwHistoryPopup');
+    if(!popup)return;
+  const was=popup.classList.contains('show');
+  document.querySelectorAll('.fw-history-popup.show').forEach(p=>p.classList.remove('show'));
+  if(was)return;
+  
+  let html='';
+  if(fwHistory.length){
+    for(let i=fwHistory.length-1;i>=0;i--){
+      const item=fwHistory[i];
+      const isCurr=item.ver===fwCurrent;
+      html+='<div class="fw-history-item'+(isCurr?' current':'')+'">';
+      if(isCurr) html+='<span style="display:flex;align-items:center;gap:6px"><span class="fw-dot-indicator"></span>';
+      html+='<span class="fw-ver">v'+item.ver+'</span>';
+      html+='<span class="fw-time">'+item.time+'</span>';
+      if(isCurr) html+='</span>';
+      html+='</div>';
+    }
+  }else{
+    html='<div class="fw-history-item"><span class="fw-ver">暂无记录</span></div>';
+  }
+  html+='<div class="fw-history-divider"></div>';
+  html+='<div class="fw-history-item"><span class="fw-ver" style="font-size:.6rem;opacity:.6">每次 4G OTA 升级成功叠加</span></div>';
+  popup.innerHTML=html;
+  popup.classList.add('show');
+  }catch(e){}
+}
+
+document.addEventListener('click',function(e){
+  if(!e.target.closest('.fw-badge')){
+    document.querySelectorAll('.fw-history-popup.show').forEach(p=>p.classList.remove('show'));
+  }
+});
+
 </script>
 </body>
 </html>
