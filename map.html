@@ -335,8 +335,9 @@ function httpPoll(){
       const offline=Date.now()-ts>120000;
       $('devStatus').textContent=offline?'离线':'在线';
       $('devStatus').style.color=offline?'#ff4757':'#00d4aa';
-      // 电量（HTTP 用 rssi 字段传电池百分比）
-      if(p.rssi!=null){$('bat').textContent=Number(p.rssi);$('bat').style.color=p.rssi<20?'#ff4757':p.rssi<50?'#ffa502':'#4f8fff';}
+      // 电量：优先用 battery 字段，fallback 到 rssi（仅 >=0 时）
+      const batVal=p.battery!=null?Number(p.battery):(p.rssi!=null&&p.rssi>=0?Number(p.rssi):null);
+      if(batVal!=null){$('bat').textContent=batVal;$('bat').style.color=batVal<20?'#ff4757':batVal<50?'#ffa502':'#4f8fff';}
       if(p.mv!=null){$('batMv').textContent='('+(Number(p.mv)/1000).toFixed(3)+'V)';}
       // GPS 数据只使用真实 GPS 点；普通 latest 仅用于在线/电量/蜂窝状态。
       const gps=d.latest_gps||null;

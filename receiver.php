@@ -97,13 +97,15 @@ try {
     $fix = intval($params['fix'] ?? 0);
     $hasGps = isRealGpsPoint($lat, $lng, $fix);
     $stmt = $db->prepare(
-        'INSERT INTO sensor_data (temperature, humidity, rssi, uptime, ip, fw, lat, lng, alt, spd, sat, fix, cell_csq, cell_sim, cell_net, cell_tech, ota_status, recorded_at)
-         VALUES (:temp, :hum, :rssi, :uptime, :ip, :fw, :lat, :lng, :alt, :spd, :sat, :fix, :csq, :sim, :net, :tech, :ota, :ts)'
+        'INSERT INTO sensor_data (temperature, humidity, rssi, wifi_rssi, battery, uptime, ip, fw, lat, lng, alt, spd, sat, fix, cell_csq, cell_sim, cell_net, cell_tech, ota_status, recorded_at)
+         VALUES (:temp, :hum, :rssi, :wifi_rssi, :battery, :uptime, :ip, :fw, :lat, :lng, :alt, :spd, :sat, :fix, :csq, :sim, :net, :tech, :ota, :ts)'
     );
     $stmt->execute([
         'temp'   => $params['mv'] ?? $params['temp'] ?? null,
         'hum'    => $params['hum'] ?? null,
         'rssi'   => $params['rssi'] ?? null,
+        'wifi_rssi' => $params['wifi_rssi'] ?? null,
+        'battery'   => $params['battery'] ?? null,
         'uptime' => $params['uptime'] ?? null,
         'ip'     => $_SERVER['REMOTE_ADDR'] ?? null,
         'fw'     => isset($params['fw']) ? substr((string)$params['fw'], 0, 32) : null,

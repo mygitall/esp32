@@ -93,9 +93,9 @@ try {
 
     // 最新一条：latest 用于在线状态，latest_gps 只给真实 GPS 位置。
     if (($_GET['latest'] ?? '') === '1') {
-        $stmt = $db->query('SELECT recorded_at AS ts, temperature AS mv, humidity AS hum, rssi, fw, lat, lng, alt, spd, sat, fix, cell_csq AS csq, cell_sim AS sim, cell_net AS net, cell_tech AS tech, ota_status AS ota FROM sensor_data ORDER BY id DESC LIMIT 1');
+        $stmt = $db->query('SELECT recorded_at AS ts, temperature AS mv, humidity AS hum, rssi, wifi_rssi, battery, fw, lat, lng, alt, spd, sat, fix, cell_csq AS csq, cell_sim AS sim, cell_net AS net, cell_tech AS tech, ota_status AS ota FROM sensor_data ORDER BY id DESC LIMIT 1');
         $row = $stmt->fetch();
-        $gpsStmt = $db->query('SELECT recorded_at AS ts, temperature AS mv, humidity AS hum, rssi, fw, lat, lng, alt, spd, sat, fix, cell_csq AS csq, cell_sim AS sim, cell_net AS net, cell_tech AS tech, ota_status AS ota
+        $gpsStmt = $db->query('SELECT recorded_at AS ts, temperature AS mv, humidity AS hum, rssi, wifi_rssi, battery, fw, lat, lng, alt, spd, sat, fix, cell_csq AS csq, cell_sim AS sim, cell_net AS net, cell_tech AS tech, ota_status AS ota
                                FROM sensor_data
                                WHERE fix = 1 AND lat IS NOT NULL AND lng IS NOT NULL
                                  AND NOT (lat = 0 AND lng = 0)
@@ -211,7 +211,7 @@ function queryData(PDO $db, array $params): array {
                 GROUP BY ts ORDER BY ts ASC";
     } else {
         // points: 返回所有原始点
-        $sql = "SELECT recorded_at AS ts, temperature AS mv, humidity AS hum, rssi, fw, lat, lng, alt, spd, sat, fix, cell_csq AS csq, cell_sim AS sim, cell_net AS net, cell_tech AS tech, ota_status AS ota
+        $sql = "SELECT recorded_at AS ts, temperature AS mv, humidity AS hum, rssi, wifi_rssi, battery, fw, lat, lng, alt, spd, sat, fix, cell_csq AS csq, cell_sim AS sim, cell_net AS net, cell_tech AS tech, ota_status AS ota
                 FROM sensor_data
                 WHERE {$whereSql}
                 ORDER BY recorded_at ASC";

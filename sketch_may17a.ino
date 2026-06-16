@@ -71,7 +71,8 @@ bool cellularReady = false;
 unsigned long lastCellularSetup = 0;
 
 // Air780EX 4G 远程 OTA（设备主动拉取，适合运营商 NAT 下的 4G 网络）
-const char* FW_VERSION = "2026.06.15.76";
+const int FW_BUILD = 78;                                         // 数值 build 号，用于版本比较
+const char* FW_VERSION = "2026.06.15.78";
 const char* CELLULAR_OTA_MANIFEST_URL = "http://167.179.110.113/gps/ota/manifest.txt";
 const unsigned long CELLULAR_OTA_INITIAL_DELAY = 60000;       // 开机 1 分钟后再检查
 const unsigned long CELLULAR_OTA_CHECK_INTERVAL = 120000;     // 每 2 分钟检查一次
@@ -87,6 +88,8 @@ bool otaInProgress = false;
 unsigned long otaStartedAt = 0;
 bool pppOtaActive = false;
 uint8_t otaTcpRangeBuf[CELLULAR_OTA_TCP_RANGE_SIZE];
+unsigned long otaBlockUntil = 0;                               // OTA 失败后阻塞主业务上报的时间点（0=不阻塞）
+bool otaJustCompleted = false;                                 // OTA 刚完成，需要在重启前上报一次成功状态
 String forcedOtaUrl = "";
 String forcedOtaMd5 = "";
 int forcedOtaSize = 0;
@@ -1947,6 +1950,10 @@ cleanup:
   }
   exitAir780TransparentMode();
   otaStatus = "tcp_done";
+  otaJustCompleted = true;
+  // 重启前通过 4G 上报一次 OTA 成功状态
+  String successJson = "{\"fw\":\"" + String(FW_VERSION) + "\",\"ota\":\"success\"}";
+  cellularHttpReport(successJson);
   delay(1000);
   ESP.restart();
   return true;
@@ -2386,6 +2393,16 @@ cleanup:
   }
 
   otaStatus = "ppp_done";
+  otaJustCompleted = true;
+  // 重启前通过 PPP 网络上报一次 OTA 成功状态
+  {
+    HTTPClient http;
+    http.begin(CELLULAR_REPORT_URL);
+    http.addHeader("Content-Type", "application/json");
+    String successJson = "{\"fw\":\"" + String(FW_VERSION) + "\",\"ota\":\"success\"}";
+    http.POST(successJson);
+    http.end();
+  }
   delay(1000);
   ESP.restart();
   return true;
@@ -2481,6 +2498,12 @@ bool cellularDownloadAndApplyOta(String url, int expectedSize, String expectedMd
     return false;
   }
   Serial.println("4G OTA 完成，准备重启");
+  otaJustCompleted = true;
+  // 重启前通过 4G 上报一次 OTA 成功状态
+  {
+    String successJson = "{\"fw\":\"" + String(FW_VERSION) + "\",\"ota\":\"success\"}";
+    cellularHttpReport(successJson);
+  }
   delay(1000);
   ESP.restart();
   return true;
@@ -2518,9 +2541,10 @@ void checkCellularOta() {
     Serial.println("4G OTA manifest 缺少 version/url");
     return;
   }
-  if (version <= String(FW_VERSION)) {
+  int remoteBuild = manifestValue(manifest, "build").toInt();
+  if (remoteBuild <= FW_BUILD) {
     otaStatus = "latest";
-    Serial.printf("4G OTA 已是最新版本: %s\n", FW_VERSION);
+    Serial.printf("4G OTA 已是最新版本: %s (build %d)\n", FW_VERSION, FW_BUILD);
     return;
   }
 
@@ -2552,6 +2576,11 @@ void cellularOtaTask(void *param) {
   }
   otaStartedAt = 0;
   otaInProgress = false;
+  // OTA 失败后 5 分钟内不再尝试，避免反复阻塞主业务
+  if (otaStatus != "latest" && otaStatus != "tcp_done" && otaStatus != "ppp_done" && otaStatus != "success") {
+    otaBlockUntil = millis() + 300000;
+    Serial.println("OTA 未成功，5 分钟内不再尝试，恢复主业务");
+  }
   vTaskDelete(NULL);
 }
 
@@ -2656,9 +2685,14 @@ void connectMQTT() {
 void httpReport(String json) {
   if (WiFi.status() != WL_CONNECTED) {
 #ifdef USE_AIR780EX
-    if (otaInProgress || pppOtaActive) {
+    if ((otaInProgress || pppOtaActive) && otaBlockUntil == 0) {
       Serial.println("HTTP 上报跳过：4G OTA 正在使用 Air780EX");
       return;
+    }
+    // OTA 超时后恢复主业务上报
+    if (otaBlockUntil > 0 && millis() > otaBlockUntil) {
+      otaBlockUntil = 0;
+      Serial.println("OTA 阻塞超时，恢复主业务上报");
     }
     if (cellularHttpReport(json)) {
       Serial.println("Air780EX 4G 上报成功");
@@ -2776,7 +2810,8 @@ void publishSensorData() {
 #endif
 
   // 发布状态（WiFi 信号、运行时间始终可用）
-  json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
+  json += "\"wifi_rssi\":" + String(WiFi.RSSI()) + ",";
+  json += "\"battery\":null,";
   json += "\"uptime\":" + String(millis() / 1000) + ",";
   json += "\"ip\":\"" + WiFi.localIP().toString() + "\",";
   json += "\"fw\":\"" + String(FW_VERSION) + "\"";
@@ -3266,10 +3301,15 @@ void loop() {
     publishCellularStatus();
   }
   if (!otaInProgress &&
+      otaBlockUntil == 0 &&
       millis() > CELLULAR_OTA_INITIAL_DELAY &&
       (lastCellularOtaCheck == 0 || millis() - lastCellularOtaCheck >= CELLULAR_OTA_CHECK_INTERVAL)) {
     lastCellularOtaCheck = millis();
     startCellularOtaTask();
+  }
+  // OTA 阻塞过期后恢复检查
+  if (otaBlockUntil > 0 && millis() > otaBlockUntil) {
+    otaBlockUntil = 0;
   }
 #endif
 

@@ -12,6 +12,7 @@ try {
 
     // 检查并添加 GPS + 蜂窝列
     $gpsCols = [
+        'wifi_rssi'=>'INT','battery'=>'INT',
         'fw'=>'VARCHAR(32)',
         'lat'=>'DOUBLE','lng'=>'DOUBLE','alt'=>'DOUBLE','spd'=>'DOUBLE','sat'=>'INT','fix'=>'INT',
         'cell_csq'=>'INT','cell_sim'=>'VARCHAR(16)','cell_net'=>'VARCHAR(16)','cell_tech'=>'VARCHAR(16)',
