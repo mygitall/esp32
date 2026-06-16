@@ -71,8 +71,8 @@ bool cellularReady = false;
 unsigned long lastCellularSetup = 0;
 
 // Air780EX 4G 远程 OTA（设备主动拉取，适合运营商 NAT 下的 4G 网络）
-const int FW_BUILD = 78;                                         // 数值 build 号，用于版本比较
-const char* FW_VERSION = "2026.06.15.78";
+const int FW_BUILD = 79;                                         // 数值 build 号，用于版本比较
+const char* FW_VERSION = "2026.06.15.79";
 const char* CELLULAR_OTA_MANIFEST_URL = "http://167.179.110.113/gps/ota/manifest.txt";
 const unsigned long CELLULAR_OTA_INITIAL_DELAY = 60000;       // 开机 1 分钟后再检查
 const unsigned long CELLULAR_OTA_CHECK_INTERVAL = 120000;     // 每 2 分钟检查一次
@@ -2414,11 +2414,19 @@ bool cellularDownloadAndApplyOta(String url, int expectedSize, String expectedMd
     return false;
   }
 
+  // PPP 优先：ESP32 自带 PPP 栈更可靠，适合弱网环境
+  if (cellularDownloadAndApplyOtaPpp(url, expectedSize, expectedMd5)) {
+    return true;
+  }
+  if (otaStatus.startsWith("ppp_")) {
+    Serial.printf("PPP OTA 未完成，回退 TCP: %s\n", otaStatus.c_str());
+  }
+
   if (cellularDownloadAndApplyOtaTcpRange(url, expectedSize, expectedMd5)) {
     return true;
   }
   if (otaStatus.startsWith("tcp_range") || otaStatus.startsWith("tcp_r_")) {
-    Serial.printf("TCP Range OTA 未完成，准备尝试 PPP: %s\n", otaStatus.c_str());
+    Serial.printf("TCP Range OTA 未完成: %s\n", otaStatus.c_str());
   }
 
   for (int attempt = 0; attempt < 1; attempt++) {
@@ -2429,18 +2437,11 @@ bool cellularDownloadAndApplyOta(String url, int expectedSize, String expectedMd
     Serial.printf("TCP 透传 OTA 超时，准备重试 attempt=%d status=%s\n", attempt + 1, otaStatus.c_str());
     delay(3000);
   }
-  if (otaStatus.startsWith("tcp_")) {
-    Serial.printf("TCP 透传 OTA 未完成，准备尝试 PPP: %s\n", otaStatus.c_str());
-  }
-
-  if (cellularDownloadAndApplyOtaPpp(url, expectedSize, expectedMd5)) {
-    return true;
-  }
   if (CELLULAR_OTA_FAST_ONLY) {
     otaStatus = String("fast_") + otaStatus;
     return false;
   }
-  Serial.printf("PPP 快速 OTA 未完成，回退 AT 分块方案: %s\n", otaStatus.c_str());
+  Serial.printf("快速 OTA 未完成，回退 AT 分块方案: %s\n", otaStatus.c_str());
 
   if (!Update.begin(expectedSize)) {
     Serial.printf("OTA 开始失败，可用空间不足或分区不支持，size=%d\n", expectedSize);
