@@ -71,8 +71,8 @@ bool cellularReady = false;
 unsigned long lastCellularSetup = 0;
 
 // Air780EX 4G 远程 OTA（设备主动拉取，适合运营商 NAT 下的 4G 网络）
-const int FW_BUILD = 79;                                         // 数值 build 号，用于版本比较
-const char* FW_VERSION = "2026.06.15.79";
+const int FW_BUILD = 81;                                         // 数值 build 号，用于版本比较
+const char* FW_VERSION = "2026.06.15.81";
 const char* CELLULAR_OTA_MANIFEST_URL = "http://167.179.110.113/gps/ota/manifest.txt";
 const unsigned long CELLULAR_OTA_INITIAL_DELAY = 60000;       // 开机 1 分钟后再检查
 const unsigned long CELLULAR_OTA_CHECK_INTERVAL = 120000;     // 每 2 分钟检查一次
@@ -2576,12 +2576,12 @@ void cellularOtaTask(void *param) {
     checkCellularOta();
   }
   otaStartedAt = 0;
-  otaInProgress = false;
-  // OTA 失败后 5 分钟内不再尝试，避免反复阻塞主业务
+  // OTA 失败后先设 otaBlockUntil，再释放 otaInProgress，避免竞态条件
   if (otaStatus != "latest" && otaStatus != "tcp_done" && otaStatus != "ppp_done" && otaStatus != "success") {
     otaBlockUntil = millis() + 300000;
     Serial.println("OTA 未成功，5 分钟内不再尝试，恢复主业务");
   }
+  otaInProgress = false;
   vTaskDelete(NULL);
 }
 

@@ -109,15 +109,18 @@ function saveData(PDO $db, array $data) {
         $hasGps = isRealGpsPoint($lat, $lng, $fix);
         if ($hasGps) {
             $stmt = $db->prepare(
-                'INSERT INTO sensor_data (temperature, humidity, rssi, uptime, ip, lat, lng, alt, spd, sat, fix, cell_csq, recorded_at)
-                 VALUES (:temp, :hum, :rssi, :uptime, :ip, :lat, :lng, :alt, :spd, :sat, :fix, :csq, NOW())'
+                'INSERT INTO sensor_data (temperature, humidity, rssi, wifi_rssi, battery, uptime, ip, fw, lat, lng, alt, spd, sat, fix, cell_csq, ota_status, recorded_at)
+                 VALUES (:temp, :hum, :rssi, :wifi_rssi, :battery, :uptime, :ip, :fw, :lat, :lng, :alt, :spd, :sat, :fix, :csq, :ota, NOW())'
             );
             $stmt->execute([
                 'temp'   => $data['temp'] ?? null,
                 'hum'    => $data['hum'] ?? null,
                 'rssi'   => $data['bat'] ?? $data['rssi'] ?? null,
+                'wifi_rssi' => $data['wifi_rssi'] ?? null,
+                'battery'   => $data['battery'] ?? null,
                 'uptime' => $data['uptime'] ?? null,
                 'ip'     => $data['ip'] ?? null,
+                'fw'     => isset($data['fw']) ? substr((string)$data['fw'], 0, 32) : null,
                 'lat'    => $lat,
                 'lng'    => $lng,
                 'alt'    => $data['alt'] ?? null,
@@ -125,6 +128,7 @@ function saveData(PDO $db, array $data) {
                 'sat'    => $data['sat'] ?? null,
                 'fix'    => 1,
                 'csq'    => $data['csq'] ?? null,
+                'ota'    => isset($data['ota']) ? substr((string)$data['ota'], 0, 32) : null,
             ]);
         } else {
             if (!array_key_exists('temp', $data) && !array_key_exists('hum', $data)
@@ -133,15 +137,19 @@ function saveData(PDO $db, array $data) {
                 return;
             }
             $stmt = $db->prepare(
-                'INSERT INTO sensor_data (temperature, humidity, rssi, uptime, ip, recorded_at)
-                 VALUES (:temp, :hum, :rssi, :uptime, :ip, NOW())'
+                'INSERT INTO sensor_data (temperature, humidity, rssi, wifi_rssi, battery, uptime, ip, fw, ota_status, recorded_at)
+                 VALUES (:temp, :hum, :rssi, :wifi_rssi, :battery, :uptime, :ip, :fw, :ota, NOW())'
             );
             $stmt->execute([
                 'temp'   => $data['temp'] ?? null,
                 'hum'    => $data['hum'] ?? null,
                 'rssi'   => $data['bat'] ?? $data['rssi'] ?? null,
+                'wifi_rssi' => $data['wifi_rssi'] ?? null,
+                'battery'   => $data['battery'] ?? null,
                 'uptime' => $data['uptime'] ?? null,
                 'ip'     => $data['ip'] ?? null,
+                'fw'     => isset($data['fw']) ? substr((string)$data['fw'], 0, 32) : null,
+                'ota'    => isset($data['ota']) ? substr((string)$data['ota'], 0, 32) : null,
             ]);
         }
     } catch (Exception $e) {
